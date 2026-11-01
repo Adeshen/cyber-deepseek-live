@@ -1,0 +1,111 @@
+{
+  "vidu": {
+    "api_key": "",
+    "host": "api.vidu.cn",
+    "create_path": "/live/s_avatar/component",
+    "ws_path": "/live/v1/external-lives/{live_id}/stream",
+    "api_keys": null,
+    "use_proxy": false
+  },
+  "model": "vidu-s2",
+  "avatar": {
+    "avatar_id": "",
+    "image_uri": null,
+    "name": "your-avatar"
+  },
+  "action": {
+    "enabled": true,
+    "library_id": "0"
+  },
+  "rtc": {
+    "mode": "managed",
+    "managed_provider": "artc",
+    "customer_provider": "artc",
+    "artc": {
+      "app_id": "",
+      "app_key": "",
+      "token_shape": ""
+    },
+    "trtc": {
+      "sdk_app_id": "",
+      "secret_key": ""
+    },
+    "managed_recording": false,
+    "record_dir": ""
+  },
+  "llm": {
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "thinking": "disabled",
+    "key_file": "",
+    "temperature": 0.7,
+    "max_tokens": "",
+    "history_turns": 8,
+    "system_prompt": "## 定位\n\n你是「小雅」，一个年轻的女性数字人主播，正在直播间里面对镜头与观众实时互动。\n（这是示例人设，请换成你自己写的角色设定。）\n\n## 输出规范\n\n- 只输出纯对话，像真人对着麦克风说话，第一人称，口语化。\n- 不出现括号内容、星号动作、表情符号、markdown、列表。\n- 回复一到三句，通常不超过 60 字。\n\n## 红线\n\n- 不聊政治、色情、暴力、赌博；不做医疗、金融、投资类承诺；不诱导刷礼物。\n- 不编造事实；被问是不是真人时，大方承认自己是数字人。"
+  },
+  "tts": {
+    "engine": "omnivoice",
+    "omnivoice_base": "http://127.0.0.1:9877",
+    "omnivoice_timeout_sec": 120,
+    "voices_dir": "",
+    "voice": "tw-xiaoya",
+    "files_dir": "audio",
+    "song_dirs": [],
+    "lyrics_dir": [],
+    "lyrics_cache_dir": "lyrics-cache",
+    "chunk_ms": 100,
+    "gain": 1.0,
+    "breeze_base": "http://127.0.0.1:17860",
+    "breeze_timeout_sec": 300,
+    "breezeblue_base": "https://api.breeze.blue/v1",
+    "breezeblue_key_file": "assets/local/breezeblue.key",
+    "breezeblue_timeout_sec": 120,
+    "breezeblue_streaming": true
+  },
+  "session": {
+    "greeting": "",
+    "idle_timeout_seconds": 500,
+    "max_duration_seconds": 36000,
+    "send_output_per_sentence": true
+  },
+  "bridge": {
+    "port": 8795
+  },
+  "danmaku_source": {
+    "enabled": false,
+    "url": "ws://127.0.0.1:8757/ws?roomId=YOUR_ROOM_ID&types=chat,gift",
+    "room_id": "YOUR_ROOM_ID",
+    "platform": "抖音",
+    "max_age_ms": 20000
+  },
+  "danmaku": {
+    "mode": null,
+    "drop_words": [
+      "倒立",
+      "翻跟斗"
+    ],
+    "answer_gap_ms": null,
+    "answer_max_wait_ms": null,
+    "answer_max_sentences": 2,
+    "answer_only": true,
+    "max_age_ms": 20000,
+    "collect_window_ms": 200,
+    "batch": {"enabled": true, "max_items": 4, "read_max": 0},
+    "read_interval_ms": 3500,
+    "vip_min_interval_ms": 5000
+  },
+  "stage": {
+    "cap_overlay": true,
+    "cap_offset_px": 200,
+    "cap_lines": 3,
+    "cap_font_px": 19,
+    "cap_fade_sec": 20,
+    "cap_show_sys": true,
+    "mask_ids": true,
+    "shadow": "medium"
+  },
+  "danmaku_cmd": {
+    "enabled": true,
+    "mode": "confirm"
+  }
+}

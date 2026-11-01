@@ -1,0 +1,3025 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>大肥鱼控制台</title>
+<script>
+window.STAGE_OUTPUT_ONLY = new URLSearchParams(location.search).get("output") === "1";
+if (window.STAGE_OUTPUT_ONLY){
+  document.documentElement.classList.add("output-only");
+  document.title = "大肥鱼直播画面";
+}
+</script>
+<!-- 阿里 ARTC Web SDK(managed_rtc 默认 provider; 客户模式 artc 也用它) -->
+<script src="https://g.alicdn.com/apsara-media-box/imp-web-rtc/7.1.9/aliyun-rtc-sdk.js"></script>
+<style>
+:root{
+  --bg:#0b0f17; --panel:#111827; --panel2:#0e1522; --line:#1f2a3c;
+  --txt:#e5edf8; --dim:#8fa0b8; --acc:#5ea0ff; --ok:#39c98e; --warn:#f0a13c; --bad:#ff6b6b;
+}
+*{box-sizing:border-box; margin:0; padding:0}
+html,body{height:100%}
+body{background:radial-gradient(1200px 700px at 70% -10%, #14203a 0%, var(--bg) 55%);
+  color:var(--txt); font:14px/1.6 "Segoe UI","Microsoft YaHei",sans-serif; overflow:hidden}
+#app{display:flex; flex-direction:column; height:100%}
+
+/* ── 顶栏 ── */
+#top{display:flex; align-items:center; gap:12px; padding:10px 16px; border-bottom:1px solid var(--line)}
+#top .logo{font-weight:700; font-size:15px; letter-spacing:.5px}
+#top .logo small{color:var(--dim); font-weight:400; margin-left:6px}
+.pill{padding:2px 10px; border-radius:999px; border:1px solid var(--line); color:var(--dim); font-size:12px; white-space:nowrap}
+.pill.live{color:var(--ok); border-color:var(--ok)}
+.pill.err{color:var(--bad); border-color:var(--bad)}
+.pill.busy{color:var(--warn); border-color:var(--warn)}
+#top .sp{flex:1}
+button{background:#1b2740; color:var(--txt); border:1px solid #2a3a58; border-radius:8px;
+  padding:7px 14px; cursor:pointer; font-size:13px}
+button:hover{background:#22314f}
+button:disabled{opacity:.45; cursor:not-allowed}
+button.primary{background:linear-gradient(135deg,#3b82f6,#6366f1); border:none}
+button.danger{background:#3a1620; border-color:#5c2331; color:#ff9c9c}
+button.ghost{background:transparent}
+
+/* ── 主区 ── */
+/* 2026-10-17 用户要求: 数字人容器**左侧与屏幕左边缘完全贴合**(直播时截取的就是这块,
+   原来 #main 左侧 16px 留白 + 容器 1px 边框 + 14px 圆角 → 截出来左边有一条黑边)。
+   处理: 左侧 padding 归零 + 去掉容器左边框与左侧圆角; 右侧/上下保持原样。 */
+#main{flex:1; display:flex; min-height:0; padding:12px 16px 12px 0; gap:0; --rightW:420px; --splitW:10px}
+#videoWrap{flex:1 1 auto; display:flex; align-items:center; justify-content:center; min-width:0;
+  background:var(--panel2); border:1px solid var(--line); border-left:0; border-radius:0 14px 14px 0;
+  position:relative; overflow:hidden}
+#videoWrap video{width:100%; height:100%; object-fit:contain; background:transparent}
+/* 未连线底图: 上一次连线数字人的原始图(纯显示层, 不参与任何连线逻辑; 连线即隐藏) */
+#avatarStill{position:absolute; inset:0; width:100%; height:100%; object-fit:contain;
+  background:transparent; user-select:none; pointer-events:none}
+/* 连线提示条: 全部钉在容器底部(含 创建中/入会中/失败/断线), 上方空间让给底图 */
+#mask{position:absolute; inset:auto 0 0 0; display:flex; flex-direction:column; gap:10px; align-items:center;
+  padding:22px 16px 16px; background:linear-gradient(180deg, rgba(8,12,20,0), rgba(8,12,20,.92) 42%);
+  backdrop-filter:blur(2px); z-index:5}
+#mask h2{font-size:17px; font-weight:600}
+#mask .cap{color:var(--dim); font-size:13px; text-align:center; max-width:86%}
+#mask .maskRow{display:flex; gap:10px; align-items:center; justify-content:center; flex-wrap:wrap}
+/* ⏺ 自动录播开关(2026-10-23, 2026-10-23 二次改: 开/关必须有肉眼级差异)
+   关 = 空心灰点 + 描边灰字 + 灰底;开 = 实心红底 + 白字 + 白色实心点 + 呼吸光环。
+   两种状态连"形状"都不同(描边 vs 实心块), 扫一眼就能区分, 不靠猜颜色。 */
+#btnRec{font-size:13px; font-weight:600; padding:9px 16px; border-radius:10px; cursor:pointer;
+  white-space:nowrap; transition:all .18s; display:inline-flex; align-items:center; gap:7px;
+  border:1px solid #3b465a; background:#141b28; color:#8b97ab}
+#btnRec::before{content:""; width:10px; height:10px; border-radius:50%; flex:0 0 auto;
+  border:2px solid #6a7689; background:transparent; box-sizing:border-box}
+#btnRec:hover{border-color:#66748d; color:#c9d3e2}
+#btnRec.on{border-color:#ff7285; background:#cf1130; color:#fff;
+  box-shadow:0 0 0 1px rgba(255,114,133,.55) inset, 0 0 20px rgba(255,40,76,.5)}
+#btnRec.on::before{background:#fff; border-color:#fff; animation:recPulse 1.3s infinite}
+#btnRec:disabled{opacity:.6; cursor:wait}
+@keyframes recPulse{0%,100%{box-shadow:0 0 0 2px rgba(255,255,255,.4)}
+  50%{box-shadow:0 0 0 7px rgba(255,255,255,0)}}
+/* ↻ 手动拉取录播: 中性次要按钮, 别和开关抢视觉 */
+#btnRecFetch{font-size:12px; padding:9px 13px; border-radius:10px; cursor:pointer; white-space:nowrap;
+  border:1px solid #2f3a4d; background:transparent; color:#7f8b9f; transition:all .18s}
+#btnRecFetch:hover{border-color:#66748d; color:#c9d3e2}
+#btnRecFetch:disabled{opacity:.6; cursor:wait}
+#soundHint{position:absolute; z-index:6; inset:0; display:none; align-items:center; justify-content:center;
+  background:rgba(8,12,20,.55); cursor:pointer; font-size:15px; color:#fff}
+#rightPanel{flex:0 0 var(--rightW); display:flex; flex-direction:column; min-width:0; max-width:none; position:relative;
+  background:var(--panel); border:1px solid var(--line); border-radius:14px; overflow:hidden}
+/* 拖动条(2026-10-20): 视频区与右栏之间, 拖它调宽度(240px ~ 屏宽75%), 双击复位 420px。
+   16px 的透明命中区 + 常驻可见的 7px 圆角条 + 中间 ⋮⋮ 抓点, hover/拖动变金色。 */
+#main.dragging{user-select:none; cursor:col-resize}
+#splitter{flex:0 0 16px; cursor:col-resize; position:relative; background:transparent; touch-action:none}
+#splitter::before{content:''; position:absolute; left:50%; top:3%; bottom:3%; width:8px;
+  transform:translateX(-50%); background:rgba(223,190,150,.26); border:1px solid rgba(223,190,150,.55);
+  border-radius:8px; transition:background .15s, box-shadow .15s, width .15s}
+#splitter::after{content:'⋮⋮'; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  color:rgba(223,190,150,.85); font-size:16px; letter-spacing:2px; line-height:1; pointer-events:none; text-shadow:0 0 6px rgba(0,0,0,.5)}
+#splitter:hover::before,#main.dragging #splitter::before{background:var(--acc); width:10px;
+  box-shadow:0 0 14px var(--acc)}
+#splitter:hover::after,#main.dragging #splitter::after{color:#0b1220}
+#rightPanel .head{padding:8px 14px; border-bottom:1px solid var(--line); color:var(--dim); font-size:12px;
+  display:flex; justify-content:space-between; align-items:center}
+#trList{flex:1; overflow-y:auto; padding:10px 12px; display:flex; flex-direction:column; gap:8px}
+.tr{max-width:92%; padding:7px 11px; border-radius:10px; font-size:13px; white-space:pre-wrap; word-break:break-word}
+.tr.user{align-self:flex-end; background:#1d3050}
+.tr.dh{align-self:flex-start; background:#172538; border:1px solid #22344f}
+.tr.sys{align-self:center; color:var(--dim); font-size:12px; background:transparent; border:1px dashed var(--line)}
+.tr.srv{align-self:center; color:#6d7f99; font-size:11px; font-family:Consolas,monospace; max-width:98%}
+.tr b{color:var(--acc); font-weight:600}
+.tr.gift{align-self:stretch; color:#ffe3a6; background:#35281c; border:1px solid #75532c; font-weight:600}
+
+/* ── 底栏 ── */
+#bottom{display:flex; gap:8px; align-items:center; padding:10px 16px; border-top:1px solid var(--line)}
+#txt{flex:1; background:#0d1526; border:1px solid var(--line); color:var(--txt); border-radius:10px;
+  padding:10px 12px; font-size:14px; outline:none}
+#txt:focus{border-color:#3b82f6}
+/* 直发输入框(2026-10-11): 右下角, type9 直发 Vidu 不经 LLM, 紫色系与聊天框区分 */
+#txtCmd{flex:1; background:#131024; border:1px solid #3d3370; color:var(--txt); border-radius:10px;
+  padding:10px 12px; font-size:14px; outline:none}
+#txtCmd::placeholder{color:#8480b3}
+#txtCmd:focus{border-color:#8b5cf6}
+button.cmdsend{background:linear-gradient(135deg,#8b5cf6,#d946ef); border:none}
+/* Stage B: 自动匹配开关行 + 确认条(疑似指令一键直发) */
+#autoRow select{background:#0d1526; border:1px solid var(--line); color:var(--txt);
+  border-radius:8px; padding:6px 8px; font-size:12px; outline:none}
+#confirmBar{position:fixed; right:16px; bottom:64px; z-index:90; display:flex;
+  flex-direction:column; gap:8px; width:min(360px, 40vw)}
+#confirmBar .citem{background:#181327; border:1px solid #4c3f85; border-radius:12px;
+  padding:10px 12px; box-shadow:0 6px 24px rgba(0,0,0,.45); font-size:13px}
+#confirmBar .citem b{color:#c4b5fd}
+#confirmBar .citem .crow{display:flex; gap:8px; margin-top:8px; align-items:center}
+#confirmBar button{padding:5px 12px; font-size:12px; border-radius:8px}
+#confirmBar .ok{background:linear-gradient(135deg,#8b5cf6,#d946ef); border:none; color:#fff}
+#confirmBar .no{background:transparent; border:1px solid var(--line); color:var(--dim)}
+#confirmBar .csrc{color:var(--dim); font-size:11px}
+
+/* ── 歌词面板(音乐软件式): 数字人左侧居中, 历史行上滚缩小渐隐, 当前行高亮 ── */
+#lyricBox{position:absolute; left:26px; top:50%; transform:translateY(-50%);
+  width:min(340px, 42%); height:308px; overflow:hidden; z-index:45; pointer-events:none;
+  -webkit-mask-image:linear-gradient(180deg,transparent 0,#000 22%,#000 78%,transparent 100%);
+  mask-image:linear-gradient(180deg,transparent 0,#000 22%,#000 78%,transparent 100%)}
+#lyricBox .lycInner{position:absolute; left:0; right:0; top:0;
+  transition:transform .45s cubic-bezier(.22,.61,.36,1)}
+#lyricBox .lyc{height:44px; display:flex; align-items:center; color:#95aac7; font-size:15px;
+  font-weight:500; letter-spacing:.5px;
+  /* 阴影走 CSS 变量(设置抽屉「阴影强度」4 档): 原来写死 4 层黑阴影, 两层向下散 6px/14px,
+     视觉上像在歌词下面垫了一条灰黑底衬(用户 2026-10-10 反馈) → 默认改成紧贴柔影 */
+  text-shadow:var(--lyr-sh, 0 1px 2px rgba(0,0,0,.45));
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  transition:color .3s, font-size .3s, opacity .3s; opacity:.5}
+#lyricBox .lyc.on{color:#fff; font-size:24px; font-weight:700; opacity:1;
+  /* 当前行: 紧贴柔影 + 一点点中性暗晕(默认不含偏蓝光晕) */
+  text-shadow:var(--lyr-sh-on, 0 1px 3px rgba(0,0,0,.6), 0 2px 9px rgba(0,0,0,.32))}
+
+/* ── 画面内「字幕 + 事件」覆盖层(推流可见): 水平居中, Y 在歌词层下方; 纯覆盖、零布局位移 ──
+   位置/字号/行数/淡出都走设置抽屉(写入 config.json 的 stage 段), 由 applyCapCfg() 打 CSS 变量 */
+#capOverlay{position:absolute; left:50%; transform:translateX(-50%);
+  top:calc(50% + var(--cap-off, 200px));
+  width:min(76%, 760px); z-index:46; pointer-events:none; text-align:center; opacity:1;
+  transition:opacity .8s ease}
+#capOverlay .cap{color:#fff; font-size:var(--cap-font, 17px); font-weight:600; line-height:1.45;
+  margin:3px 0; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  overflow:hidden; word-break:break-word;
+  text-shadow:var(--cap-sh, 0 1px 2px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.3));
+  transition:opacity .35s ease}
+#capOverlay .cap.old1{opacity:.5}
+#capOverlay .cap.old2{opacity:.28}
+#capOverlay .cap.user{color:#a9e4ff}
+#capOverlay .cap.sys{color:#ffd8a2; font-size:calc(var(--cap-font, 17px) - 2px); font-weight:500}
+
+/* ── 动作指令特效(2026-10-14 用户要求): 画面**中间偏右**, 从弹幕里精简出的指令滚动展示,
+   最近真正命中的那条高亮放大 + 一点点小礼花(克制)。纯覆盖、pointer-events:none, 不占布局 ── */
+#cmdFx{position:absolute; right:5.5%; top:50%; transform:translateY(-50%); z-index:45;
+  height:172px; width:36%; pointer-events:none; overflow:visible}
+#cmdFx .row{position:absolute; right:0; top:0; font-size:12.5px; line-height:1.6;
+  color:#93a7c0; max-width:100%; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+  text-shadow:0 1px 2px rgba(0,0,0,.7); will-change:transform, opacity}
+#cmdFx .row:nth-last-child(2){opacity:.6}
+#cmdFx .row:last-child{opacity:.88}
+#cmdFx .row.suggest{color:#ffdca8}
+#cmdFx .row.deny{color:#ff9d9d; text-decoration:line-through; text-decoration-thickness:1px}
+#cmdFx .row.blocked{color:#6f7d91}
+
+/* 演示模式图例(只在 ?fxdemo=1 显示, 直播画面永不出现) —— 用来说明每种灰/色/符号的含义 */
+#fxLegend{position:absolute; left:14px; top:14px; z-index:46; pointer-events:none;
+  font-size:11.5px; line-height:1.7; color:#c9d6e6; background:rgba(8,14,24,.58);
+  border:1px solid rgba(120,150,190,.26); border-radius:8px; padding:8px 11px; max-width:250px;
+  text-shadow:0 1px 2px rgba(0,0,0,.6)}
+#fxLegend b{color:#fff}
+/* 命中牌(用户 2026-10-14 五次调整): 字号只比普通行大一点点(15.5px vs 12.5px, 落定后 ~1.06 倍),
+   圆角 16px; 配色 = 沙金文字 #DFBE96 + 暗红描边 #970804(牌底与辉光同步偏暖红, 免得和紫蓝底打架);
+   华丽感 = 极淡对角高光 + 呼吸暖光 + 环形冲击波 + 玻璃反光 + 逐字浮现 */
+#cmdFx .row.hit{font-size:15.5px; font-weight:800; color:#DFBE96; opacity:1; padding:2px 12px;
+  border-radius:16px; letter-spacing:.4px; overflow:visible;
+  /* ⚠️ 这里绝不能写 position:relative —— 会覆盖 .row 的 absolute, 命中牌被撑满容器宽度(边框变长)。
+     绝对定位的行本身就是 positioned ancestor, ::after / .ring / 粒子都不需要它(2026-10-14 踩坑) */
+  background:
+    linear-gradient(135deg, rgba(255,255,255,.10) 0%, rgba(255,255,255,0) 46%),
+    linear-gradient(135deg, rgba(48,18,14,.74), rgba(70,26,18,.62));
+  border:1px solid rgba(238,160,140,.45);
+  box-shadow:0 0 16px rgba(238,160,140,.22), 0 2px 10px rgba(0,0,0,.45),
+             inset 0 1px 0 rgba(255,235,210,.10);
+  text-shadow:0 0 10px rgba(223,190,150,.60), 0 1px 3px rgba(0,0,0,.85);
+  /* ⚠️ 只留 box-shadow 的呼吸动画: transform 交给 JS 逐帧插值(丝滑上浮),
+     若这里再放 transform 动画, fill-mode 会覆盖内联 transform → 位置又变成"跳" */
+  animation:cmdGlow 2.4s ease-in-out infinite alternate}
+/* 逐字浮现(第 2 个华丽特效): 每个字依次从下方淡入 */
+#cmdFx .row.hit .ch{display:inline-block; opacity:0; animation:cmdCh .26s ease-out both}
+@keyframes cmdCh{from{opacity:0; transform:translateY(4px) scale(.86)} to{opacity:1; transform:none}}
+/* 玻璃反光: 命中后一道斜光扫过一次(只跑一次, 跑完留在画外不可见) */
+#cmdFx .row.hit::after{content:""; position:absolute; inset:0; border-radius:inherit; pointer-events:none;
+  background:linear-gradient(105deg, rgba(255,255,255,0) 34%, rgba(255,255,255,.34) 50%, rgba(255,255,255,0) 66%);
+  background-size:240% 100%; background-position:130% 0;
+  animation:cmdSheen .95s ease-out .22s 1 both}
+@keyframes cmdSheen{from{background-position:130% 0} to{background-position:-40% 0}}
+@keyframes cmdHit{0%{transform:scale(.80); opacity:0} 60%{transform:scale(1.20)} 100%{transform:scale(1.06); opacity:1}}
+@keyframes cmdGlow{from{box-shadow:0 0 14px rgba(238,160,140,.15), 0 2px 10px rgba(0,0,0,.45),
+                            inset 0 1px 0 rgba(255,235,210,.10)}
+                   to{box-shadow:0 0 26px rgba(238,160,140,.38), 0 2px 10px rgba(0,0,0,.45),
+                            inset 0 1px 0 rgba(255,235,210,.14)}}
+/* 环形冲击波(命中瞬间从牌后扩散一圈) */
+#cmdFx .ring{position:absolute; right:6px; top:50%; width:24px; height:24px; margin-top:-12px;
+  border-radius:50%; border:1.5px solid rgba(255,229,178,.55); pointer-events:none;
+  animation:cmdRing .65s ease-out forwards}
+@keyframes cmdRing{0%{transform:scale(.35); opacity:.85} 100%{transform:scale(5); opacity:0}}
+/* 新条目入场: 已改由 JS 逐帧插值(从下方滑入+淡入), .enter 动画停用 —— 它含 transform,
+   会覆盖内联 transform 造成"跳"和"看不见消散"(2026-10-14) */
+#cmdFx .spark{position:absolute; right:8px; top:50%; border-radius:50%; line-height:1;
+  pointer-events:none; animation:cmdSpark .95s ease-out forwards}
+/* 粒子拖尾(第 3 个华丽特效, 2026-10-14): 部分粒子带一小段渐隐光尾(方向为近似值, 全向都好看) */
+#cmdFx .spark.trail::after{content:""; position:absolute; right:0; top:50%; width:13px; height:1.6px;
+  transform:translateY(-50%); border-radius:2px; opacity:.7;
+  background:linear-gradient(90deg, currentColor, rgba(255,255,255,0))}
+@keyframes cmdSpark{0%{transform:translate(0,0) scale(1); opacity:1}
+  100%{transform:translate(var(--dx),var(--dy)) scale(.15); opacity:0}}
+/* 历史指令"化粒子消散"(用户 2026-10-14): 行内随机位置飘出细小暖色粒子, 越早的历史出得越快 */
+#cmdFx .dust{position:absolute; border-radius:50%; pointer-events:none;
+  box-shadow:0 0 5px currentColor; animation:cmdDust .74s ease-out forwards}
+@keyframes cmdDust{0%{transform:translate(0,0) scale(1); opacity:.9}
+  100%{transform:translate(var(--dx),var(--dy)) scale(.25); opacity:0}}
+/* 命中瞬间的"全屏极短泛光"已按用户要求撤掉(2026-10-14: "这个特效不要") */
+
+/* ── 会话日志·容器底部条(推流可见; 用户 2026-10-13): sys 事件镜像
+   「会话已创建 live_id=…」「会话已结束(user_end) · 计费 126s · 126 积分」等。
+   左对齐贴底(避开居中的 mask 按钮), 会话已创建时清旧; 隐私打码同 maskId ── */
+#sessLog{position:absolute; left:0; right:0; bottom:0; z-index:6; display:none; flex-direction:column;
+  align-items:flex-start; gap:2px; padding:14px 16px 7px; pointer-events:none; text-align:left;
+  background:linear-gradient(180deg, transparent, rgba(4,10,20,.6) 45%)}
+#sessLog .sl{font-size:12px; line-height:1.5; color:#c7d4e6; word-break:break-word; white-space:pre-wrap;
+  text-shadow:0 1px 2px rgba(0,0,0,.6)}
+#sessLog .sl:first-child{opacity:.55}
+
+/* ── 点播歌单面板(挂在右侧字幕/事件区内, 只覆盖它不碰视频区; transform 滑入) ── */
+#btnStopSong{ font-weight:700 }
+#btnStopSong.on{ color:#ff7a7a; border-color:#ff7a7a80; box-shadow:0 0 10px #ff7a7a55 }
+#songs{position:absolute; inset:0; width:auto; background:var(--panel);
+  border-left:1px solid var(--line); z-index:60; display:flex; flex-direction:column;
+  transform:translateX(103%); transition:transform .25s ease; will-change:transform}
+#songs.open{transform:translateX(0); box-shadow:-10px 0 30px rgba(0,0,0,.4)}
+#songs .shead{display:flex; justify-content:space-between; align-items:center; padding:10px 14px;
+  border-bottom:1px solid var(--line); font-weight:600}
+#songs .sbar{display:flex; gap:6px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap}
+#songs .sbar input[type=text]{flex:1; min-width:120px}
+/* ── 快捷指令面板(同歌单: 右侧滑入, 只覆盖字幕/事件区) ── */
+#cmds{position:absolute; inset:0; width:auto; background:var(--panel);
+  border-left:1px solid var(--line); z-index:60; display:flex; flex-direction:column;
+  transform:translateX(103%); transition:transform .25s ease; will-change:transform}
+#cmds.open{transform:translateX(0); box-shadow:-10px 0 30px rgba(0,0,0,.4)}
+#cmds .shead{display:flex; justify-content:space-between; align-items:center; padding:10px 14px;
+  border-bottom:1px solid var(--line); font-weight:600}
+#cmdGrid{flex:1; min-height:0; overflow-y:auto; padding:10px 12px}
+#cmdGrid .cgroup{margin-bottom:12px}
+#cmdGrid .cgroup h4{margin:2px 0 6px; color:var(--dim); font-size:12px; font-weight:600}
+#cmdGrid .chips{display:flex; flex-wrap:wrap; gap:6px}
+#cmdGrid button.chip{background:#0d1526; border:1px solid var(--line); color:var(--txt);
+  padding:5px 11px; border-radius:14px; cursor:pointer; font-size:13px; transition:transform .06s}
+#cmdGrid button.chip:hover{border-color:var(--acc); color:var(--acc)}
+#cmdGrid button.chip:active{transform:scale(.94)}
+#cmdGrid button.chip.sent{border-color:var(--acc); color:var(--acc); box-shadow:0 0 8px var(--acc)}
+#cmdGrid button.chip.merged{border-color:#DFBE96; color:#DFBE96; box-shadow:0 0 6px rgba(223,190,150,.55)}
+/* 🎲 拟人化「随机表演」(2026-10-16 用户点单): 组标题行里的开关 + 两个下拉 + 顶栏运行指示 */
+#cmdGrid .cgroup h4.rndh{display:flex; align-items:center; gap:6px; flex-wrap:wrap}
+#rndBtn{background:#0d1526; border:1px solid var(--line); color:var(--txt); border-radius:8px;
+  padding:2px 8px; font-size:12px; font-weight:600; cursor:pointer}
+#rndBtn:hover{border-color:var(--acc); color:var(--acc)}
+#rndBtn.on{border-color:#DFBE96; color:#DFBE96; box-shadow:0 0 8px rgba(223,190,150,.45)}
+/* ✏️ 快捷指令编辑模式(2026-10-20): 拖拽排序 / × 隐藏 / 已隐藏行可恢复 */
+#btnCmdEdit.on{border-color:#DFBE96; color:#DFBE96; box-shadow:0 0 8px rgba(223,190,150,.45)}
+#cmdGrid.editing .chipwrap{cursor:grab}
+.chipwrap{display:inline-flex; align-items:center; gap:2px; position:relative}
+.chipwrap.dragging{opacity:.35}
+.chipwrap.dropover{outline:2px dashed #DFBE96; outline-offset:1px; border-radius:8px}
+.chipdel{margin-left:-4px; background:transparent; border:0; color:#e07a7a; font-size:14px; line-height:1;
+  padding:2px 4px; cursor:pointer; opacity:.9}
+.chipdel:hover{color:#ff9b9b; text-shadow:0 0 6px rgba(224,122,122,.6)}
+.hiddenrow{opacity:.75; margin-top:4px}
+.hiddenrow .hint{color:var(--dim); font-size:12px; margin-right:4px}
+.ghostchip{opacity:.7; text-decoration:line-through}
+
+.chipnew{border-style:dashed; color:#DFBE96}
+
+.chipadded{border-color:#9ad6a0}
+button.ghost.mini{padding:1px 6px; font-size:11px; margin-left:8px}
+#rndEvery,#rndBias{background:#0d1526; border:1px solid var(--line); color:var(--txt);
+  border-radius:8px; padding:2px 4px; font-size:12px; font-weight:400}
+#rndBadge{cursor:pointer; border-color:#DFBE96 !important; color:#DFBE96}
+/* ── 参考图面板(换装 / 拿起商品 / 换背景 · type11): 同歌单/快捷指令, 右侧滑入只盖字幕区 ── */
+#refs{position:absolute; inset:0; width:auto; background:var(--panel);
+  border-left:1px solid var(--line); z-index:60; display:flex; flex-direction:column;
+  transform:translateX(103%); transition:transform .25s ease; will-change:transform}
+#refs.open{transform:translateX(0); box-shadow:-10px 0 30px rgba(0,0,0,.4)}
+#refs .shead{display:flex; justify-content:space-between; align-items:center; padding:10px 14px;
+  border-bottom:1px solid var(--line); font-weight:600}
+#refs .sbar{display:flex; gap:6px; align-items:center; padding:8px 14px; border-bottom:1px solid var(--line); flex-wrap:wrap}
+#refs .sbar input[type=text]{flex:1; min-width:110px}
+#refs .sbar button{padding:5px 10px; border-radius:9px; cursor:pointer}
+#refThumb{flex:1; min-height:0; overflow:auto; padding:10px 14px}
+#refThumb img{max-width:100%; border-radius:10px; border:1px solid var(--line); display:block}
+#refThumb .hint{color:var(--dim); font-size:12px; line-height:1.7}
+#refThumb .hint b{color:#DFBE96; font-weight:600}
+/* ── 音色热切面板(同歌单/指令: 右侧滑入) ── */
+#voicePill{cursor:pointer; user-select:none}
+#voicePill::after{content:" ▾"; font-size:10px; opacity:.7}
+#vpanel{position:absolute; inset:0; width:auto; background:var(--panel);
+  border-left:1px solid var(--line); z-index:60; display:flex; flex-direction:column;
+  transform:translateX(103%); transition:transform .25s ease; will-change:transform}
+#vpanel.open{transform:translateX(0); box-shadow:-10px 0 30px rgba(0,0,0,.4)}
+#vpanel .shead{display:flex; justify-content:space-between; align-items:center; padding:10px 14px;
+  border-bottom:1px solid var(--line); font-weight:600}
+#voiceList{flex:1; min-height:0; overflow-y:auto; padding:10px 12px}
+#voiceList .vrow{display:flex; align-items:center; gap:8px; padding:7px 10px; border:1px solid var(--line);
+  border-radius:10px; margin-bottom:6px; cursor:pointer; background:#0d1526}
+#voiceList .vrow:hover{border-color:var(--acc)}
+#voiceList .vrow.on{border-color:var(--acc); box-shadow:0 0 8px var(--acc)}
+#voiceList .vname{font-size:14px; font-weight:600; white-space:nowrap}
+#voiceList .vlabel{color:var(--dim); font-size:12px; flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap}
+#voiceList .vprev{font-size:12px; padding:3px 9px; border-radius:8px; border:1px solid var(--line);
+  background:transparent; color:var(--dim); cursor:pointer; white-space:nowrap}
+#voiceList .vprev:hover{color:var(--acc); border-color:var(--acc)}
+#voiceList .vprev:disabled{opacity:.5; cursor:wait}
+#songGrid{flex:1; min-height:0; overflow-y:auto; padding:10px 12px; display:grid;
+  grid-template-columns:repeat(auto-fill, minmax(150px,1fr)); gap:8px; align-content:start}
+.song{position:relative; background:#0d1526; border:1px solid var(--line); color:var(--txt);
+  border-radius:10px; padding:9px 26px 8px 10px; cursor:pointer; font-size:13px; line-height:1.35;
+  overflow:hidden}
+.song .t{white-space:nowrap; text-overflow:ellipsis; overflow:hidden}
+.song small{display:block; color:#61728c; font-size:10px}
+.song:hover{border-color:#3b82f6}
+.song.playing{border-color:#22c55e; color:#a9f0d4; box-shadow:0 0 0 1px #22c55e inset, 0 0 12px rgba(34,197,94,.28)}
+.song .del,.song .scr{position:absolute; background:transparent; border:0; color:#5b6b84;
+  cursor:pointer; border-radius:6px; line-height:1}
+.song .del{right:3px; top:4px; font-size:13px; padding:2px 5px}
+.song .scr{right:3px; bottom:3px; font-size:11px; padding:1px 5px}
+.song .del:hover{color:#ff6b6b; background:#1a1220}
+.song .scr:hover{color:#f0a13c; background:#1a1608}
+#songGrid .empty{grid-column:1/-1; color:#61728c; text-align:center; padding:26px 0; font-size:13px}
+#songGrid .songlib{grid-column:1/-1; display:flex; align-items:center; gap:8px; margin:8px 0 0;
+  padding:0 2px 5px; border-bottom:1px solid rgba(223,190,150,.18); color:#DFBE96;
+  font-size:11px; letter-spacing:.14em; cursor:pointer; user-select:none}
+#songGrid .songlib:first-child{margin-top:0}
+#songGrid .songlib span.n{color:#61728c; letter-spacing:.05em}
+#songGrid .songlib span.ar{margin-left:auto; color:#61728c; font-size:10px}
+#songGrid .songlib:hover{color:#f3d9b6}
+
+/* ── 设置抽屉(挂在右侧字幕/事件区内, 只覆盖它不碰视频区; transform 滑入不触发重排) ── */
+#drawer{position:absolute; inset:0; width:auto; background:var(--panel);
+  border-left:1px solid var(--line); z-index:50; display:flex; flex-direction:column;
+  transform:translateX(103%); transition:transform .25s ease; will-change:transform}
+#drawer.open{transform:translateX(0); box-shadow:-10px 0 30px rgba(0,0,0,.4)}
+#drawer .dhead{display:flex; justify-content:space-between; align-items:center; padding:12px 16px;
+  border-bottom:1px solid var(--line); font-weight:600}
+#dbody{flex:1; overflow-y:auto; padding:12px 16px; display:flex; flex-direction:column; gap:14px}
+.sect{border:1px solid var(--line); border-radius:12px; padding:12px 14px}
+.sect h3{font-size:13px; color:var(--acc); margin-bottom:8px; font-weight:600}
+.sect .row{display:flex; gap:8px; align-items:center; margin:6px 0; flex-wrap:wrap}
+.sect label{color:var(--dim); font-size:12px; min-width:76px}
+input[type=text],input[type=number],textarea,select{background:#0d1526; border:1px solid var(--line);
+  color:var(--txt); border-radius:8px; padding:7px 10px; font-size:13px; outline:none; font-family:inherit}
+input[type=text]:focus,textarea:focus{border-color:#3b82f6}
+.sect input[type=text],.sect select{flex:1; min-width:120px}
+.sect input[type=number]{width:90px}
+.sect textarea{width:100%; min-height:64px; resize:vertical}
+.sect .hint{color:#61728c; font-size:11px; margin-top:4px}
+.chk{display:flex; gap:6px; align-items:center; color:var(--txt); font-size:13px}
+#toasts{position:fixed; top:14px; left:50%; transform:translateX(-50%); z-index:99; display:flex;
+  flex-direction:column; gap:8px; align-items:center}
+.toast{background:#13223c; border:1px solid #2a3a58; padding:8px 16px; border-radius:10px; font-size:13px;
+  animation:fade .2s}
+.toast.bad{border-color:var(--bad); color:#ffb4b4}
+@keyframes fade{from{opacity:0; transform:translateY(-6px)}to{opacity:1}}
+.kbd{color:#61728c; font-size:11px}
+/* 独立采集窗口只显示舞台，不显示后台按钮、系统日志或连接信息。 */
+html.output-only,html.output-only body{background:#000; overflow:hidden}
+html.output-only #top,html.output-only #bottom,html.output-only #rightPanel,
+html.output-only #splitter,html.output-only #confirmBar,html.output-only #toasts,
+html.output-only #mask,html.output-only #soundHint,html.output-only #sessLog,
+html.output-only #fxLegend,html.output-only #cmdFx,
+html.output-only #drawer,html.output-only #songs,html.output-only #cmds,
+html.output-only #vpanel,html.output-only #refs{display:none !important}
+html.output-only #main{padding:0; gap:0; overflow:hidden}
+html.output-only #videoWrap{border:0; border-radius:0; background:#000}
+html.output-only #video{display:none}
+html.output-only #outputMedia{position:absolute; inset:0; width:100%; height:100%}
+html.output-only #outputMedia video{position:absolute; inset:0; width:100%; height:100%; object-fit:contain}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="top">
+    <span class="logo">数字人 <small>vidu-s2 · 组件版</small></span>
+    <span class="pill" id="phasePill">未连线</span>
+    <span class="pill" id="timerPill" style="display:none">0:00</span>
+    <span class="pill" id="videoHealthPill" style="display:none"></span>
+    <span class="pill" id="speakPill" style="display:none">她在说话…</span>
+    <span class="pill" id="voicePill" style="display:none"></span>
+    <span class="pill" id="danSourcePill" style="display:none" title="已订阅本地弹幕源；数字人连线后才会回应弹幕和礼物"></span>
+    <span class="pill" id="rndBadge" style="display:none" title="拟人化随机表演运行中 · 点击停止"></span>
+    <span class="pill" id="fxPill" style="cursor:pointer" title="画面右侧「当前下发动作」滚动特效 · 点一下开关">🎬 特效 开</span>
+    <span class="sp"></span>
+      <button class="ghost" id="btnSplitFold" title="折叠/展开右栏（视频占满整屏）">⤢ 全屏视频</button>
+    <button class="ghost" id="btnBroadcastWindow" title="打开独立画面；直播伴侣窗口源选择“大肥鱼直播画面”">▣ 直播画面窗口</button>
+    <button class="ghost" id="btnDrawer">⚙ 设置</button>
+    <button class="danger" id="btnStop" style="display:none">挂断</button>
+  </div>
+
+  <div id="main">
+    <div id="videoWrap">
+      <img id="avatarStill" alt="" style="display:none">
+      <video id="video" playsinline autoplay muted></video>
+      <div id="lyricBox" style="display:none"></div>
+  <div id="capOverlay" style="display:none"><div class="capInner"></div></div>
+      <div id="mask">
+        <h2>▶ 连线数字人</h2>
+        <div class="cap" id="maskCap">组件版：Vidu 只做渲染推流，LLM / BreezeBlue 语音由本地桥接入。<br>默认平台托管 RTC 频道，无需自备。</div>
+        <div class="maskRow">
+          <button class="primary" id="btnGo" style="font-size:15px; padding:10px 26px">开始连线</button>
+          <button id="btnRec" title="开播时让 Vidu 服务端录播，播完自动下载到本地（建会话时生效）">⏺ 自动录播：关</button>
+          <button id="btnRecFetch" title="手动再拉一次服务端录播（自动等待超时 / 没抓到的时候点一下）">↻ 拉取录播</button>
+        </div>
+      </div>
+      <div id="sessLog"></div>
+      <div id="cmdFx"></div>
+      <div id="soundHint">🔇 点击画面开启声音</div>
+    </div>
+      <div id="splitter" title="拖动调整右栏宽度 · 双击复位（420px）"></div>
+    <div id="rightPanel">
+      <div class="head"><span>字幕 / 事件</span><span class="kbd">Enter 发送 · Esc 关抽屉</span></div>
+      <div id="trList"></div>
+    </div>
+  </div>
+
+  <div id="bottom">
+    <input id="txt" placeholder="打字跟她聊…（发送即驱动：type9 → LLM → TTS → 喂流）" autocomplete="off">
+    <button class="primary" id="btnSend">发送</button>
+    <input id="txtCmd" placeholder="直发 Vidu 做动作…（不经 LLM，她默默执行）" autocomplete="off">
+    <button class="cmdsend" id="btnCmdSend" title="直发 type9：Vidu 直接做动作，不经 LLM/TTS，她不出声">🎬 直发</button>
+    <button id="btnItt" title="打断当前播报(type7)">🔇 打断</button>
+    <button id="btnSongs" title="点播歌单：歌曲/音频，点击即播">🎵 点播歌单</button>
+    <button id="btnCmds" title="快捷指令：点击=打字发送，指挥她做动作">🕹 快捷指令</button>
+    <button id="btnRefs" title="参考图：换装 / 拿起指定商品 / 换背景（会话内生效，不额外计费）">🖼 参考图</button>
+  </div>
+</div>
+
+<div id="vpanel">
+  <div class="shead"><span>🎙 音色切换 <span style="color:var(--dim); font-weight:400">点击即热切 · 下句话生效</span></span>
+    <button class="ghost" id="btnVoiceX">✕</button></div>
+  <div class="sbar"><button id="btnVoiceRefresh" class="ghost">🔄 刷新列表</button>
+    <span style="color:var(--dim); font-size:12px">TTS = BreezeBlue 官方 API · 当前默认 Breeze02</span></div>
+  <div id="voiceList"><div class="empty" style="padding:14px; color:var(--dim)">点开面板自动加载…</div></div>
+</div>
+
+<div id="cmds">
+  <div class="shead"><span>🕹 快捷指令 <span style="color:var(--dim); font-weight:400">点击 = 直发 Vidu 做动作 · 不经 LLM</span></span>
+    <button class="ghost" id="btnCmdsX">✕</button></div>
+  <div class="sbar" id="autoRow">
+    <label style="display:flex;align-items:center;gap:6px;cursor:pointer;white-space:nowrap">
+      <input type="checkbox" id="autoMatchChk"> <span style="font-weight:600">自动匹配</span></label>
+    <select id="autoModeSel" style="display:none">
+      <option value="confirm">确认模式（T2 结果发我确认）</option>
+      <option value="auto">全自动（T2 结果直接做）</option>
+    </select>
+    <span style="color:var(--dim); font-size:12px">开=弹幕命中指令她自动做 · 关=纯手点</span>
+  </div>
+  <div class="sbar" id="cmdEditRow">
+    <button class="ghost" id="btnCmdEdit" type="button"
+            title="编辑快捷指令：拖拽排序、点 × 隐藏（只改本浏览器的面板，不动动作库）">✏️ 编辑</button>
+    <button class="ghost" id="btnCmdResetAll" type="button" title="全部恢复成出厂顺序">↺ 全部恢复</button>
+    <button class="ghost" id="btnCmdExport" type="button" title="导出自定义配置(复制到剪贴板)">⇩ 导出</button>
+    <button class="ghost" id="btnCmdImport" type="button" title="粘贴配置导入">⇧ 导入</button>
+    <span style="color:var(--dim); font-size:12px" id="cmdEditTip">关 = 点一下即发送</span>
+  </div>
+  <div id="cmdGrid"></div>
+</div>
+
+<div id="confirmBar" style="display:none"></div>
+
+<!-- 🖼 参考图面板(2026-10-17 接入 type=11 prompt_operation): 换装 / 拿起指定商品 / 换背景。
+     三条铁律: ①成功无回执(数秒内画面自己变) ②换装别传 kind、图里不能有人脸 ③切换前先还原并等 15~20s -->
+<div id="refs">
+  <div class="shead"><span>🖼 参考图 <span style="color:var(--dim); font-weight:400">换装 · 拿起商品 · 换背景（会话内生效）</span></span>
+    <button class="ghost" id="btnRefsX">✕</button></div>
+  <div class="sbar">
+    <input type="file" id="refFile" accept="image/*" style="display:none">
+    <button id="btnRefPick">📂 选参考图</button>
+    <span id="refName" style="color:var(--dim); font-size:12px; flex:1">未选择</span>
+  </div>
+  <div class="sbar">
+    <input type="text" id="refUri" placeholder="或粘贴 ssupload:?id=… 短链 / https 图片地址">
+  </div>
+  <div class="sbar">
+    <input type="text" id="refText" placeholder="user_text 描述（很关键，如「让数字人手持这把团扇」）">
+  </div>
+  <div class="sbar">
+    <button id="btnRefObj" title="kind=object：手持物">📦 拿起这个商品</button>
+    <button id="btnRefDress" title="换装：不传 kind（实测更稳），图里不能有人脸">👗 换上这身衣服</button>
+    <button id="btnRefBg" title="kind=background：换背景">🌆 换这个背景</button>
+    <button id="btnRefClear" title="op_type=remove：还原">↩ 还原</button>
+  </div>
+  <div class="sbar"><span id="refState" style="color:var(--dim); font-size:12px">当前：无</span></div>
+  <div id="refThumb"><div class="hint">
+    选一张图 → 点对应按钮即可（<b>数秒内画面自己变，没有回执</b>）。<br>
+    · 商品图/服装图<b>不要带人脸</b>（带脸会被当成"主体"贴进画面）<br>
+    · 换装<b>别用 garment</b>（本版实测会叠出另一个人），用"👗 换上这身衣服"这条<br>
+    · 已有参考图挂着时，新切换会先自动<b>还原并等 16 秒</b>（不先撤掉新图常静默不生效）
+  </div></div>
+</div>
+
+<div id="songs">
+  <div class="shead"><span>🎵 点播歌单 <span id="songCount" style="color:var(--dim); font-weight:400"></span></span>
+    <button class="ghost" id="btnStopSong" title="立刻打断当前播放(唱歌/朗读都会停)">⏹ 停止演唱</button>
+    <button class="ghost" id="btnSongsX">✕</button></div>
+  <div class="sbar">
+    <button id="btnPickFiles">📂 选歌曲文件</button>
+    <button id="btnPickDir" title="浏览器里选一个文件夹, 里面的歌全部上传">🗂 选整个文件夹</button>
+    <button id="btnImportFolder" class="primary" title="服务端直接从本机路径拷贝, 秒导">📥 导入本机文件夹</button>
+    <input type="text" id="songLocalPath" placeholder="本机歌曲文件夹路径, 如 D:\我的歌曲">
+    <button id="btnSongRefresh" title="刷新列表">🔄</button>
+  </div>
+  <div class="sbar">
+    <input type="text" id="songFilter" placeholder="🔍 搜歌名…（点击歌名=播放 · ✎=带字幕播 · ×=删除）" style="width:100%">
+  </div>
+  <div id="songGrid"><div class="empty">加载中…</div></div>
+  <input type="file" id="songFiles" multiple accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus,.webm" style="display:none">
+  <input type="file" id="songDir" webkitdirectory multiple style="display:none">
+</div>
+
+<div id="drawer">
+  <div class="dhead"><span>⚙ 设置（保存后下次连线生效；音色即时生效）</span><button class="ghost" id="btnDrawerX">✕</button></div>
+  <div id="dbody">
+    <div class="sect"><h3>Vidu API</h3>
+      <div class="row"><label>API Key</label><input type="password" id="s_vidu_key" autocomplete="off" placeholder="未配置，填写后保存"></div>
+      <div class="hint">填写你自己的 Vidu Key 并保存，再点“开始连线”。留空保留已存密钥。</div>
+    </div>
+    <div class="sect"><h3>会话</h3>
+      <div class="row"><label>模型</label>
+        <select id="s_model"><option value="vidu-s2">vidu-s2（灰度最新）</option><option value="vidu-s1">vidu-s1（稳定）</option></select></div>
+      <div class="row"><label>RTC 模式</label>
+        <select id="s_rtcmode"><option value="managed">managed 平台托管（推荐）</option><option value="customer">customer 自备频道</option></select></div>
+      <div class="row"><label>托管 provider</label>
+        <select id="s_mprovider"><option value="artc">artc 阿里</option><option value="trtc">trtc 腾讯</option></select></div>
+      <div class="row"><label>自备 provider</label>
+        <select id="s_cprovider"><option value="artc">artc 阿里</option><option value="trtc">trtc 腾讯</option></select></div>
+      <div class="row"><label>形象 avatar_id</label><input type="text" id="s_avatar_id" placeholder="留空用配置里的 image_uri"></div>
+      <div class="row"><label>形象图片</label><input type="file" id="s_img" accept=".png,.jpg,.jpeg,.webp" style="color:var(--dim)">
+        <span class="hint">换图后需重新连线；单人照 ≤50MB</span></div>
+      <div class="row"><label>开场白</label><input type="text" id="s_greeting" placeholder="连线就绪后她先说这句（可空）"></div>
+      <div class="row"><label>闲置挂断(s)</label><input type="number" id="s_idle" min="60" step="30">
+        <label>单场上限(s)</label><input type="number" id="s_maxdur" min="120" step="60"></div>
+    </div>
+
+    <div class="sect"><h3>声音（BreezeBlue 官方 API）</h3>
+      <div class="row"><label>音色预设</label><select id="s_voice"></select>
+        <button id="btnVoiceRefresh" class="ghost">刷新</button>
+        <button id="btnPreview" class="ghost">▶ 试听</button></div>
+      <div class="row"><label>试听文本</label><input type="text" id="s_prevtxt" value="你好呀，这是我的声音，今天也要开心哦。"></div>
+      <div class="row"><label>喂流帧长(ms)</label><input type="number" id="s_chunk" min="20" max="1000" step="20">
+        <label>输出按句 type10</label><input type="checkbox" id="s_persent" class="chk"></div>
+      <div class="hint">默认 Breeze02 使用已选参考音频复用声线；可直接试听，无需开始 Vidu 连线。</div>
+    </div>
+
+    <div class="sect"><h3>LLM（OpenAI 兼容 · 默认 DeepSeek）</h3>
+      <div class="row"><label>base_url</label><input type="text" id="s_llm_base"></div>
+      <div class="row"><label>model</label><input type="text" id="s_llm_model"></div>
+      <div class="row"><label>key 文件</label><input type="text" id="s_llm_keyfile" placeholder="留空 = 环境变量 DEEPSEEK_API_KEY"></div>
+      <div class="row"><label>temperature</label><input type="number" id="s_llm_temp" step="0.1" min="0" max="2">
+        <label>max_tokens</label><input type="number" id="s_llm_maxtok" min="50" step="50"></div>
+      <div class="row"><label>人设 system</label></div>
+      <textarea id="s_llm_sys"></textarea>
+      <div class="row"><button id="btnLlmReset" class="ghost">清空对话记忆</button></div>
+    </div>
+
+    <div class="sect"><h3>自备 RTC 凭证（customer 模式）</h3>
+      <div class="row"><label>ARTC AppID</label><input type="text" id="s_artc_id"></div>
+      <div class="row"><label>ARTC AppKey</label><input type="text" id="s_artc_key" placeholder="已配置（要改才填）"></div>
+      <div class="row"><label>token 形态</label>
+        <select id="s_artc_shape"><option value="authinfo_b64">HMAC Base64 Token（新版应用·默认）</option><option value="concat_json">sha256+JSON 信封（官方 quickstart·老应用）</option><option value="raw">sha256 裸 hex</option></select></div>
+      <div class="row"><label>TRTC AppID</label><input type="text" id="s_trtc_id"></div>
+      <div class="row"><label>TRTC Key</label><input type="text" id="s_trtc_key" placeholder="已配置（要改才填）"></div>
+    </div>
+
+    <div class="sect"><h3>动作库（运行时动作匹配）</h3>
+      <div class="row"><label>启用</label><input type="checkbox" id="s_act_en" class="chk"></div>
+      <div class="row"><label>动作库</label><select id="s_act_lib"><option value="0">0 = 平台默认库</option></select>
+        <button id="btnActRefresh" class="ghost">刷新</button></div>
+      <div class="row"><label>新建库</label><input type="text" id="s_act_libname" placeholder="库名 1~50 字">
+        <button id="btnActNew">创建</button></div>
+      <div class="row"><label>加动作</label><input type="text" id="s_act_aname" placeholder="动作名 1~20 字" style="flex:.5">
+        <input type="text" id="s_act_adesc" placeholder="动作描述 5~500 字，如：双手向镜头挥手打招呼">
+        <button id="btnActAdd">添加</button></div>
+    </div>
+
+    <div class="sect"><h3>资产库（形象 · Vidu 平台）</h3>
+      <div class="row">
+        <button id="btnAvList" class="ghost">🔄 拉取账号资产</button>
+        <input type="file" id="avFile" accept="image/png,image/jpeg,image/webp" style="display:none">
+        <button id="btnAvUpload" class="ghost">⬆ 传图建形象</button>
+      </div>
+      <div id="avList" style="display:flex; flex-direction:column; gap:6px; max-height:230px; overflow-y:auto"></div>
+      <div class="hint">资产 = 上传图片在 Vidu 平台注册的形象，跨会话复用（图片建的资产平台 90 天后自动删）。点「启用」后**下次连线**生效；名称旁 ● = 当前正在用。</div>
+    </div>
+
+    <div class="sect"><h3>Vidu API Key（额度用完换号）</h3>
+      <div class="row"><label>当前生效</label><span id="viduKeyNow" style="color:var(--dim)">—</span></div>
+      <div class="row"><label>备用列表</label>
+        <select id="s_vidu_keys"><option value="">（空 · 先「拉取」）</option></select>
+        <button id="btnKeyList" class="ghost">拉取</button></div>
+      <div class="row">
+        <button id="btnKeyUse" class="ghost">启用选中</button>
+        <button id="btnKeyDel" class="ghost">🗑 删除选中</button>
+      </div>
+      <div class="row"><label>新 Key</label><input type="password" id="s_vidu_new" placeholder="vda_…" autocomplete="off">
+        <button id="btnKeyAddUse" class="ghost">存并启用</button>
+        <button id="btnKeyAdd" class="ghost">仅存备用</button></div>
+      <div class="hint">切换后**下一次连线**生效（进行中的会话不受影响）；换完点上方「查询」验证新 key 余额。key 只存本机 config.json，页面永远只见尾 8 位。</div>
+    </div>
+
+    <div class="sect"><h3>画面内字幕层（推流可见）</h3>
+      <div class="row"><label>显示</label><input type="checkbox" id="s_cap_on" class="chk"></div>
+      <div class="row"><label>往下偏移(px)</label><input type="number" id="s_cap_off" min="0" max="600" step="4" style="width:90px"></div>
+      <div class="row"><label>显示行数</label><input type="number" id="s_cap_lines" min="1" max="4" step="1" style="width:90px"></div>
+      <div class="row"><label>字号(px)</label><input type="number" id="s_cap_font" min="10" max="40" step="1" style="width:90px"></div>
+      <div class="row"><label>静默淡出(秒)</label><input type="number" id="s_cap_fade" min="3" max="600" step="1" style="width:90px"></div>
+      <div class="row"><label>显示事件</label><input type="checkbox" id="s_cap_sys" class="chk"></div>
+      <div class="row"><label>隐私打码（会话ID）</label><input type="checkbox" id="s_cap_mask" class="chk"></div>
+      <div class="row"><label>阴影强度（歌词+字幕）</label>
+        <select id="s_shadow">
+          <option value="none">无（最干净）</option>
+          <option value="light">淡（推荐）</option>
+          <option value="medium">中</option>
+          <option value="strong">浓（旧样式）</option>
+        </select></div>
+      <div class="hint">位置以歌词层为基准再往下 N px（默认 200，即 <code>calc(50% + 200px)</code>），水平居中、带阴影；矮窗口自动减行数（防被裁）。<br><b>隐私打码</b>默认开：<b>只作用于画面层</b>（和连线时的遮罩提示）——场次ID / 推流端UID / 频道ID 显示成 ***；<b>右侧面板保留原始 ID</b> 便于排查。点「保存设置」即时生效，不用刷新。</div>
+    </div>
+
+    <div class="sect"><h3>弹幕直播间</h3>
+      <div class="row"><label>接收弹幕</label><input type="checkbox" id="s_dan_source_enabled" class="chk"></div>
+      <div class="row"><label>直播间号</label><input type="text" id="s_dan_source_room" inputmode="numeric" placeholder="与 DyHub 正在采集的房间号一致"></div>
+      <div class="hint">DyHub 选择房间后，这里的房间号也要一致。保存后只重新订阅弹幕，数字人会话继续运行。</div>
+    </div>
+    <div class="sect"><h3>弹幕主播模式</h3>
+      <div class="row"><label>播报间隔(秒)</label>
+        <input type="number" id="s_dan_interval" min="3" max="300" step="1" style="width:90px"></div>
+      <div class="row"><label>VIP 间隔(秒)</label>
+        <input type="number" id="s_dan_vip_interval" min="1" max="300" step="1" style="width:90px"></div>
+      <div class="hint"><b>优先级：歌曲 &gt; 打字聊天 &gt; 弹幕</b>。每轮选中一条弹幕接话，附近发言只作背景；默认只回答，不复读原文，过期内容会跳过。<br>顶栏显示正在准备回复或语音发送中，并标明本轮回应对象。点「保存设置」即时生效。</div>
+    </div>
+
+    <div class="sect"><h3>其他</h3>
+      <div class="row"><label>积分余额</label><span id="creditsView" style="color:var(--dim)">—</span>
+        <button id="btnCredits" class="ghost">查询</button>
+        <button id="btnSave" class="primary">保存设置</button></div>
+      <div class="hint">计费口径：组件版按 1 积分/秒；余额 &lt;45 积分无法发起会话。</div>
+    </div>
+  </div>
+</div>
+
+<div id="toasts"></div>
+
+<script>
+"use strict";
+if (window.STAGE_OUTPUT_ONLY){
+  initOutputMirror();
+} else {
+const $ = id => document.getElementById(id);
+function openBroadcastWindow(){
+  const url = new URL(location.href);
+  url.search = "?output=1";
+  url.hash = "";
+  const output = window.open(url.href, "cyber-xiaoya-broadcast", "popup=yes,width=1280,height=720");
+  if (!output){ toast("浏览器拦截了窗口，请允许本机页面弹窗后再点一次。", true); return; }
+  output.focus();
+  toast("直播伴侣的窗口源选择「大肥鱼直播画面」。双击直播画面可进入全屏。");
+}
+$("btnBroadcastWindow").addEventListener("click", openBroadcastWindow);
+/* 2026-10-17: 页面脚本任何未捕获错误都显式提示 —— 之前一个 TDZ 报错让"连线按钮没反应"且完全静默 */
+window.addEventListener("error", e => {
+  try { toast("页面脚本出错: " + (e.message || e), true); } catch(_) {}
+  try { console.error("[stage error]", e.message, e.filename + ":" + e.lineno); } catch(_) {}
+});
+window.addEventListener("unhandledrejection", e => {
+  try { const r = e.reason; let dump = ""; try { dump = JSON.stringify(r); } catch(_e) { dump = String(r); } const msg = (r && (r.message || r.msg || r.errorMessage || r.error)) || dump || String(r); const where = (r && r.stack) ? String(r.stack).split("\n").slice(1, 3).join(" | ") : ""; console.error("[page] 未处理的异步异常:", dump, r); window.__lastAsyncErr = dump; const _st = String((r && r.stack) || "") + " " + dump; if (/inpage\.js|TronWeb|TronLink|wallet must has/i.test(_st)) { console.warn("[page] 忽略第三方插件异常(钱包类扩展):", dump); } else toast("页面异步出错: " + String(msg).slice(0, 140) + (where ? "  ← " + where : ""), true); } catch(_e2) {}
+});
+const state = {liveId:null, rtc:null, joined:false, engine:null, rtcKind:"", since:0,
+               pollTimer:null, timerTimer:null, startedAt:0, phase:"idle", rtcGeneration:0};
+
+function toast(msg, bad){
+  const d = document.createElement("div");
+  d.className = "toast" + (bad ? " bad" : "");
+  d.textContent = msg;
+  $("toasts").appendChild(d);
+  setTimeout(()=>d.remove(), 3600);
+}
+async function api(path, opt){
+  const r = await fetch(path, Object.assign({headers:{"Content-Type":"application/json"}}, opt||{}));
+  const body = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(body.detail || (r.status + " " + r.statusText));
+  return body;
+}
+function trAdd(role, text, key, eventKey){
+  if (role === "gift" && eventKey){
+    const existing = [...$("trList").children].find(el => el.dataset.eventKey === eventKey);
+    if (existing){ existing.textContent = text; return; }
+  }
+  if (key != null){ if (trAdd._seen === undefined) trAdd._seen = new Set();
+    if (trAdd._seen.size > 8000) trAdd._seen.clear();   // 长跑防膨胀(2026-10-13): 纯去重缓存, 清掉最多重画一条
+    if (trAdd._seen.has(key)) return; trAdd._seen.add(key); }
+  const d = document.createElement("div");
+  d.className = "tr " + role;
+  if (eventKey) d.dataset.eventKey = eventKey;
+  // 弹幕行已经自带【弹幕】前缀, 不要再套 "我 " (会读成"我 【弹幕】xxx", 也别扭)
+  if (role === "user" && !text.startsWith("【弹幕")){ d.textContent = "我 " + text; }
+  else if (role === "dh"){
+    const b = document.createElement("b"); b.textContent = "她 ";
+    d.append(b, document.createTextNode(text));
+  } else { d.textContent = text; }
+  const list = $("trList");
+  list.appendChild(d);
+  while (list.children.length > 300) list.removeChild(list.firstChild);
+  list.scrollTop = list.scrollHeight;
+  capPush(role, text);          // 同步一份到画面内覆盖层(推流可见)
+  if (role === "sys") sessAdd(text);   // 同步一份到视频容器底部会话日志条(推流可见)
+}
+
+/* ── 会话日志·底部条: sys 事件镜像(会话已创建/已结束·计费/强制挂断/点播…)。
+   与右侧字幕/事件同源; 隐私打码走 maskId(推流画面不上内部 ID, 可在设置里关);
+   CAP_SYS_NOISE 的运维噪音同样不上; 新会话的「会话已创建」自动清掉上一场 ── */
+function sessAdd(text){
+  const box = $("sessLog"); if (!box) return;
+  const t = maskId((text || "").trim());
+  if (!t || CAP_SYS_NOISE.some(w => t.includes(w))) return;
+  if (/^会话已创建/.test(t)) box.replaceChildren();
+  const d = document.createElement("div");
+  d.className = "sl"; d.textContent = t;
+  box.appendChild(d);
+  while (box.children.length > 6) box.removeChild(box.firstChild);
+  box.style.display = "flex";
+}
+
+/* ───── 画面内「字幕 + 事件」覆盖层: 最近 3 条, 静默 20 秒淡出 ─────
+   为什么单独做一层: 右侧容器是主播自己看的, 推流出去观众看不到;
+   这一层 absolute 覆盖在数字人画面上(居中, Y 在歌词下方), 不改任何布局 → 零位移。 */
+/* 隐私打码（用户 2026-10-10）: 这个页面会被推流到直播间, 会话/推流端/频道 ID 一律不上屏。
+   只打码"内部标识", 不动正常文案; 桥的日志文件里仍保留完整 ID 供排查。
+   不是密钥级泄露(调 Vidu 要 API Key、进 RTC 要令牌), 但内部 ID 没必要给观众看。 */
+function maskId(s){
+  if (!capCfg.maskIds) return s;
+  return String(s == null ? "" : s)
+    .replace(/live-video-push-[0-9\-]+/gi, "推流端")
+    .replace(/live_id=\S+/gi, "live_id=***")
+    .replace(/\b(uid|channel_id|room_id|app_id|avatar_id|trtc_id|artc_id)=[0-9A-Za-z\-_]+/gi, "$1=***")
+    .replace(/\b\d{12,}\b/g, "***");
+}
+
+const capLines = [];
+let capFadeTimer = null;
+/* ── 画面层不显示的系统提示(纯运维噪音; 右侧面板照旧全留, 方便排查) ──
+   用户 2026-10-10: 「弹幕播报让位给歌曲/用户操作」这类也不该给观众看。
+   要再屏蔽别的, 往这里加关键词即可。 */
+const CAP_SYS_NOISE = [
+  "弹幕播报让位", "弹幕播报被让位", "弹幕播报异常",
+  "歌曲播放中, 弹幕排队",
+  "LLM 回答超时", "LLM 失败", "TTS 失败",
+  "WS 已连接", "conn_init", "渲染侧就绪",
+  "喂流落后",                      // 桥侧诊断行(给主播看的), 不上画面
+];
+
+/* 放歌期间让位: 歌词有专门的音乐面板, 这层再显示一遍就重复了(用户 2026-10-10)。
+   点歌瞬间就抑制(页面自己知道), 轮询负责"歌停/手动停止演唱后贴回来"。 */
+let capSuppressed = false;
+let capLyricSet = new Set();          // 当前歌词行 → 永不上画面(安全网)
+function capSuppress(on){
+  on = !!on;
+  if (on === capSuppressed) return;
+  capSuppressed = on;
+  if (on) capLines.length = 0;        // 抑制期间不累积, 免得歌停后残留歌词
+  capRender();
+}
+/* 画面内字幕层配置(设置抽屉「画面内字幕层」段 → config.json 的 stage 段) */
+const capCfg = {on: true, offsetPx: 200, lines: 3, fontPx: 17, fadeSec: 20, showSys: true,
+                maskIds: true, shadow: "light"};
+
+/* 阴影强度 4 档(用户 2026-10-10: 原来的 4 层黑阴影在歌词下面像垫了条灰黑底色 → 默认调成"淡")
+   none=完全不要裸影 light=紧贴柔影(默认) medium=略强 strong=旧样式 */
+const SHADOW_STEPS = {
+  none:   ["none", "none", "none"],
+  light:  ["0 1px 2px rgba(0,0,0,.45)",
+           "0 1px 3px rgba(0,0,0,.6), 0 2px 9px rgba(0,0,0,.32)",
+           "0 1px 2px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.3)"],
+  medium: ["0 1px 3px rgba(0,0,0,.7), 0 2px 8px rgba(0,0,0,.45)",
+           "0 1px 4px rgba(0,0,0,.8), 0 3px 12px rgba(0,0,0,.5)",
+           "0 1px 3px rgba(0,0,0,.75), 0 2px 10px rgba(0,0,0,.45)"],
+  strong: ["0 0 3px rgba(0,0,0,.95), 0 1px 4px rgba(0,0,0,.95), 0 2px 10px rgba(0,0,0,.9), 0 0 14px rgba(0,0,0,.65)",
+           "0 0 4px rgba(0,0,0,.95), 0 2px 6px rgba(0,0,0,.95), 0 4px 14px rgba(0,0,0,.8)",
+           "0 0 3px rgba(0,0,0,.95), 0 1px 4px rgba(0,0,0,.95), 0 2px 10px rgba(0,0,0,.9), 0 0 14px rgba(0,0,0,.6)"],
+};
+function applyShadow(){
+  const st = SHADOW_STEPS[capCfg.shadow] || SHADOW_STEPS.light;
+  const r = document.documentElement.style;
+  r.setProperty("--lyr-sh", st[0]);       // 历史歌词行
+  r.setProperty("--lyr-sh-on", st[1]);    // 当前歌词行
+  r.setProperty("--cap-sh", st[2]);       // 画面内字幕层
+}
+function applyCapCfg(){
+  const box = $("capOverlay"); if (!box) return;
+  box.style.setProperty("--cap-off", capCfg.offsetPx + "px");
+  box.style.setProperty("--cap-font", capCfg.fontPx + "px");
+  applyShadow();
+  if (!capCfg.on){ box.style.display = "none"; return; }
+  capRender();
+}
+function capMaxLines(){                            // 视频区越矮显示越少, 免得贴到底边被裁
+  const h = ($("videoWrap") || {}).clientHeight || 800;
+  const fit = h < 520 ? 1 : (h < 660 ? 2 : 4);
+  return Math.max(1, Math.min(capCfg.lines, fit));
+}
+function capRender(){
+  const box = $("capOverlay"); if (!box) return;
+  if (!capCfg.on || capSuppressed){ box.style.display = "none"; return; }
+  const inner = box.firstElementChild;
+  const shown = capLines.slice(-capMaxLines());
+  const items = shown.map((l, i) => {
+    const n = document.createElement("div");
+    const age = shown.length - 1 - i;             // 0 = 最新
+    n.className = "cap " + l.role + (age === 1 ? " old1" : (age >= 2 ? " old2" : ""));
+    n.textContent = l.text;
+    return n;
+  });
+  inner.replaceChildren(...items);
+  box.style.display = shown.length ? "" : "none";
+}
+window.addEventListener("resize", ()=>{ capRender(); });
+function capPush(role, text){
+  if (role === "srv") return;                     // RTC 技术事件不上画面(噪音)
+  if (!capCfg.on || capSuppressed) return;        // 放歌中/整层关闭 → 不收
+  if (role === "sys") return;                     // sys 事件(推流端已上线/已加入RTC频道/会话创建/点播…)不上画面中央,
+                                                  // 2026-10-13 起一律走底部「会话日志条」#sessLog(推流可见, 隐私打码同 maskId)
+  let t = String(text == null ? "" : text).trim();
+  if (!t) return;
+  if (role === "user" && t.startsWith("【弹幕·未念】")) return;   // 只答不念的弹幕不上画面(用户 2026-10-10);
+  if (role === "user" && !t.startsWith("【弹幕")) return;   // 天工打字/命令不上画面(用户 2026-10-11): 观众只看弹幕和她的回答
+  if (role === "sys" && CAP_SYS_NOISE.some(k => t.includes(k))) return;   // 运维噪音不上画面
+  t = maskId(t);                                  // 只有画面层打码(会被推流); 右侧面板保留原始 ID
+  if (role === "dh" && capLyricSet.has(t)) return;   // 歌词行有专门的音乐面板, 别重复
+  capLines.push({role, text: t});
+  while (capLines.length > 4) capLines.shift();
+  const box = $("capOverlay"); if (!box) return;
+  box.style.display = "";
+  box.style.opacity = "1";
+  capRender();
+  if (capFadeTimer) clearTimeout(capFadeTimer);
+  capFadeTimer = setTimeout(()=>{ const b = $("capOverlay"); if (b) b.style.opacity = "0"; },
+                            Math.max(3, capCfg.fadeSec) * 1000);
+}
+function capClear(){
+  if (!capLines.length) return;
+  capLines.length = 0;
+  capRender();
+}
+
+/* ───────── 连线 ───────── */
+/* 未连线底图: 上一次连线数字人的原始图。数据源与设置抽屉同款(/api/avatars 现成返回
+   current_avatar_id + 每个资产的原始图 URL, 临时上传图走 current_image_uri 兜底)。
+   纯显示层: 只在 mask 显示/隐藏的既有切换点多一行显隐, 不碰任何连线逻辑。 */
+async function loadAvatarStill(){
+  const img = $("avatarStill");
+  try{
+    const d = await api("/api/avatars");
+    let src = "";
+    if (d.current_avatar_id){
+      const it = (d.items || []).find(x=>x.id === d.current_avatar_id);
+      src = (it && it.image) || "";
+    }
+    if (!src && d.current_image_uri) src = d.current_image_uri;
+    if (src){ img.src = src; img.style.display = "block"; }
+  }catch(e){ /* 拉不到就保持深色底, 不影响任何功能 */ }
+}
+function showAvatarStill(on){
+  const img = $("avatarStill");
+  img.style.display = (on && img.getAttribute("src")) ? "block" : "none";
+}
+/* ───────── ⏺ 自动录播开关(2026-10-23, 放在「开始连线」旁边) ─────────
+   打开 = 建会话时带 managed_rtc.enable_recording=true, 播完桥自动轮询 /recording
+   并把视频下载到 config.rtc.record_dir。⚠ 建会话时生效: 直播中切换要下一场才算。 */
+let recOn = false, recState = "";
+function renderRec(){
+  const b = $("btnRec"); if (!b) return;
+  b.classList.toggle("on", recOn);
+  b.setAttribute("aria-pressed", recOn ? "true" : "false");
+  // 文案也直接给出结论, 不让人从"开/关"里猜; 圆点在 CSS 里(开=白色实心, 关=空心灰)
+  b.textContent = recOn ? "录播：已开启" : "录播：已关闭";
+  b.title = recOn
+    ? "已开启：下次连线开播会自动录像，播完自动下载到本地 · 再点关闭"
+    : "已关闭：点一下开启，开播时让 Vidu 服务端录播并自动下载（建会话时生效）";
+}
+async function loadRec(){
+  try{ const d = await api("/api/record"); recOn = !!d.enabled; renderRec(); }catch(e){ /* 旧桥没有这个接口: 静默 */ }
+}
+async function toggleRec(){
+  const b = $("btnRec"); if (b) b.disabled = true;
+  try{
+    const d = await api("/api/record", {method:"POST", body:JSON.stringify({enabled: !recOn})});
+    recOn = !!d.enabled; renderRec();
+    toast(recOn ? "录播已开启 · 下次连线开播时生效" : "录播已关闭 · 下次连线起不再录");
+  }catch(e){ toast("切换录播失败: " + (e.message||e), true); }
+  finally{ if (b) b.disabled = false; }
+}
+$("btnRec") && $("btnRec").addEventListener("click", toggleRec);
+async function fetchRec(){
+  const b = $("btnRecFetch"); if (b) b.disabled = true;
+  try{
+    const d = await api("/api/record/fetch", {method:"POST", body:JSON.stringify({})});
+    if (d && d.ok) toast("⏺ 开始拉取录播（场次 " + d.live_id + "）");
+    else toast("拉取失败：" + ((d && d.error) || "未知"), true);
+  }catch(e){ toast("拉取失败: " + (e.message||e), true); }
+  finally{ if (b) b.disabled = false; }
+}
+$("btnRecFetch") && $("btnRecFetch").addEventListener("click", fetchRec);
+loadRec();
+
+async function start(){
+  if (state.busy) return;
+  const generation = ++state.rtcGeneration;
+  state.busy = true;
+  $("btnGo").disabled = true;
+  $("maskCap").textContent = "正在创建会话…";
+  try{
+    const res = await api("/api/live/start", {method:"POST", body:JSON.stringify({})});
+    if (generation !== state.rtcGeneration) return;
+    state.liveId = res.live_id;
+    state.rtc = res.rtc;
+    state.startedAt = Date.now();
+    $("btnStop").style.display = "";
+    $("maskCap").textContent = "已建会话 " + maskId(res.live_id) + " · RTC=" + res.rtc.provider + "（" + (res.rtc.source==="managed"?"托管":"自备") + "）";
+    await joinRtc(res.rtc, generation);
+  }catch(e){
+    if (generation !== state.rtcGeneration) return;
+    $("maskCap").textContent = "连线失败：" + (e.message || e);
+    $("btnGo").disabled = false;
+    toast("连线失败: " + (e.message||e), true);
+  }finally{
+    if (generation === state.rtcGeneration) state.busy = false;
+  }
+}
+
+function loadScript(src, timeoutMs){
+  return new Promise((res, rej)=>{
+    if (document.querySelector(`script[src="${src}"]`)) return res();
+    const s = document.createElement("script");
+    s.src = src; s.onload = res;
+    s.onerror = ()=>rej(new Error("SDK 加载失败: " + src));
+    document.head.appendChild(s);
+    setTimeout(()=>rej(new Error("SDK 加载超时")), timeoutMs||20000);
+  });
+}
+
+async function joinRtc(rtc, generation){
+  if (rtc.provider === "trtc") return joinTrtc(rtc, generation);
+  if (rtc.provider === "agora"){ toast("v1 暂未接 Agora SDK，请在设置里改用 artc/trtc", true); return; }
+  return joinArtc(rtc, generation);
+}
+
+async function joinArtc(rtc, generation){
+  if (!window.AliRtcEngine){ toast("AliRTC SDK 未加载（g.alicdn.com 可达性？）", true); return; }
+  let supported;
+  try{ supported = await window.AliRtcEngine.isSupported(); }
+  catch(e){ supported = {support:true}; }
+  if (generation !== state.rtcGeneration) return;
+  if (supported && supported.support === false){ toast("当前浏览器不支持 AliRTC: " + (supported.reason||""), true); return; }
+  try{ window.AliRtcEngine.setLogLevel(0); }catch(e){}
+  const engine = window.AliRtcEngine.getInstance();
+  state.engine = engine; state.rtcKind = "artc";
+  const current = ()=>generation === state.rtcGeneration && state.engine === engine;
+  engine.on("remoteUserOnLineNotify", uid=>{
+    if (!current()) return;
+    trAdd("sys", "数字人推流端已上线: " + uid);
+    setTimeout(()=>bindView(uid), 400);
+    setTimeout(()=>bindView(uid), 2200);
+  });
+  engine.on("remoteUserOffLineNotify", uid=>{ if (current()) trAdd("sys", "推流端离线: " + uid); });
+  engine.on("videoSubscribeStateChanged", (uid, o, n)=>{ if (current()){ trAdd("srv", "video_state uid="+uid+" "+o+"→"+n); bindView(uid); } });
+  engine.on("connectionStatusChange", (status, reason)=>{ if (current()) trAdd("srv", "RTC status="+status+" reason="+reason); });
+  engine.on("occurError", err=>{ if (current()) trAdd("sys", "RTC 错误: " + (err && err.code || "unknown")); });
+  engine.on("remoteVideoAutoPlayFail", ()=>{ if (current()) $("soundHint").style.display = "flex"; });
+  engine.on("remoteAudioAutoPlayFail", ()=>{ if (current()) $("soundHint").style.display = "flex"; });
+  engine.on("bye", code=>{ if (current()) trAdd("sys", "RTC bye code="+code); });
+  function bindView(uid){
+    if (!current()) return;
+    try{ engine.setRemoteViewConfig($("video"), uid, 1); }catch(e){}
+    tryPlay();
+  }
+  // viewer 只订阅不推流(上行音频走桥的 WS, 不经 RTC)
+  const call = async (m, ...a)=>{ if (typeof engine[m] === "function") await engine[m](...a); };
+  try{ await call("setChannelProfile", "communication"); }catch(e){}
+  await engine.publishLocalAudioStream(false);
+  await engine.publishLocalVideoStream(false);
+  try{ await call("setDefaultSubscribeAllRemoteAudioStreams", true); }catch(e){}
+  try{ await call("setDefaultSubscribeAllRemoteVideoStreams", true); }catch(e){}
+  if (!current()) return;
+  $("maskCap").textContent = "RTC 入会中(" + rtc.provider + ") · 频道 " + maskId(rtc.channel_id) + " …";
+  // 2026-10-20: F5 后重连时, 服务端上一场的频道成员可能还没彻底掉线 → join 会 reject,
+  // 以前没兜住就弹「页面异步出错」。这里重试一次并给可读提示。
+  let _joined = false, _lastErr = null;
+  for (let attempt = 1; attempt <= 2 && !_joined && current(); attempt++){
+    try{
+      await engine.joinChannel(rtc.token, rtc.user_id);
+      _joined = true;
+    }catch(err){
+      _lastErr = err;
+      console.warn("[rtc] joinChannel 第 " + attempt + " 次失败:", err);
+      if (attempt === 1) await new Promise(r => setTimeout(r, 1500));
+    }
+  }
+  if (!current()) return;
+  if (!_joined){
+    const msg = (_lastErr && (_lastErr.message || _lastErr.code || String(_lastErr))) || "未知错误";
+    $("maskCap").textContent = "RTC 入会失败（已重试）：" + msg;
+    toast("RTC 入会失败（已重试一次）：" + msg + " · 再点一次「开始连线」即可", true);
+    return;
+  }
+  state.joined = true;
+  trAdd("sys", "已入 RTC 频道 " + rtc.channel_id + "，等她推流…");
+  $("mask").style.display = "none";
+  showAvatarStill(false);
+  startTimers();
+}
+
+async function joinTrtc(rtc, generation){
+  await loadScript("https://web.sdk.qcloud.com/trtc/webrtc/v5/dist/trtc.js");
+  if (generation !== state.rtcGeneration) return;
+  if (!window.TRTC){ toast("TRTC SDK 未就绪", true); return; }
+  const client = TRTC.create();
+  state.engine = client; state.rtcKind = "trtc";
+  client.on(TRTC.EVENT.REMOTE_USER_ENTER, e=>trAdd("sys", "推流端进入: " + e.userId));
+  client.on(TRTC.EVENT.REMOTE_USER_EXIT, e=>trAdd("sys", "推流端离开: " + e.userId));
+  client.on(TRTC.EVENT.ERROR, e=>trAdd("sys", "TRTC 错误: " + (e.message||e)));
+  client.on(TRTC.EVENT.REMOTE_VIDEO_AVAILABLE, async e=>{
+    try{
+      $("video").style.display = "none";
+      await client.startRemoteVideo({userId:e.userId, streamType:e.streamType,
+        view: $("video").parentElement, option:{fillMode:"contain"}});
+      tryPlay();
+    }catch(err){ trAdd("sys", "订阅远端视频失败: " + (err.message||err)); }
+  });
+  $("maskCap").textContent = "TRTC 入会中 · 房间 " + maskId(rtc.channel_id) + " …";
+  await client.enterRoom({strRoomId: rtc.channel_id, scene:"rtc",
+    sdkAppId: Number(rtc.app_id), userId: rtc.user_id, userSig: rtc.token});
+  if (generation !== state.rtcGeneration || state.engine !== client) return;
+  state.joined = true;
+  trAdd("sys", "已进 TRTC 房间 " + rtc.channel_id);
+  $("mask").style.display = "none";
+  showAvatarStill(false);
+  startTimers();
+}
+
+function tryPlay(){
+  const v = $("video");
+  v.muted = false;
+  v.play().then(()=>{ $("soundHint").style.display = "none"; })
+          .catch(()=>{ $("soundHint").style.display = "flex"; });
+}
+$("soundHint").addEventListener("click", tryPlay);
+$("video").addEventListener("click", tryPlay);
+
+// Measure the video actually presented in this browser. Backend connection
+// health and audio throughput cannot tell us whether the picture is smooth.
+function startVideoHealth(){
+  const samples = new WeakMap();
+  const pill = $("videoHealthPill");
+  const sample = () => {
+    const video = [...$("videoWrap").querySelectorAll("video")].find(v =>
+      v.srcObject && v.srcObject.getVideoTracks().length &&
+      getComputedStyle(v).display !== "none");
+    if (!video){
+      pill.style.display = "none";
+      window.stageVideoHealth = null;
+      return;
+    }
+    const quality = typeof video.getVideoPlaybackQuality === "function"
+      ? video.getVideoPlaybackQuality() : null;
+    const total = quality ? quality.totalVideoFrames : video.webkitDecodedFrameCount;
+    const dropped = quality ? quality.droppedVideoFrames : (video.webkitDroppedFrameCount || 0);
+    if (!Number.isFinite(total)) return;
+    const now = performance.now();
+    const previous = samples.get(video);
+    samples.set(video, {now, total, dropped, stream: video.srcObject});
+    if (!previous || previous.stream !== video.srcObject || total < previous.total) return;
+    const seconds = (now - previous.now) / 1000;
+    if (seconds <= 0) return;
+    const frameDelta = Math.max(0, total - previous.total);
+    const dropDelta = Math.max(0, dropped - previous.dropped);
+    const fps = Math.max(0, (frameDelta - dropDelta) / seconds);
+    window.stageVideoHealth = {
+      fps: Math.round(fps * 10) / 10,
+      droppedFrames: dropDelta,
+      width: video.videoWidth, height: video.videoHeight,
+      paused: video.paused, hidden: document.hidden, sampledAt: Date.now(),
+    };
+    pill.style.display = "";
+    pill.className = "pill" + (fps < 10 ? " err" : "");
+    pill.textContent = "画面 · " + Math.round(fps) + " 帧/秒";
+    pill.title = video.videoWidth + " × " + video.videoHeight +
+      " · 近 " + seconds.toFixed(1) + " 秒丢帧 " + dropDelta +
+      (document.hidden ? " · 页面在后台" : "") +
+      "\n这是浏览器实际播放帧率；直播伴侣的采集和上传帧率需要单独检查。";
+  };
+  const timer = setInterval(sample, 2000);
+  window.addEventListener("pagehide", () => clearInterval(timer), {once: true});
+}
+startVideoHealth();
+
+function leaveRtc(){
+  const e = state.engine;
+  try{
+    if (state.rtcKind === "trtc" && e) e.exitRoom().catch(()=>{});
+    else if (e){ e.leaveChannel && e.leaveChannel().catch(()=>{}); }
+  }catch(err){}
+  finally{
+    if (e && typeof e.destroy === "function"){ try{ e.destroy(); }catch(err){} }
+    state.engine = null; state.joined = false; state.rtcKind = "";
+    $("video").srcObject = null;
+    $("video").style.display = "";
+  }
+}
+
+function startTimers(){
+  clearInterval(state.timerTimer);
+  state.timerTimer = setInterval(()=>{
+    if (!state.liveId) return;
+    const s = Math.floor((Date.now() - state.startedAt)/1000);
+    $("timerPill").textContent = Math.floor(s/60) + ":" + String(s%60).padStart(2,"0");
+  }, 500);
+}
+
+/* ───────── 动作指令特效(2026-10-14 用户要求) ─────────
+   画面中间偏右: 把「从弹幕里精简出来的指令」做滚动展示, 最近真正命中的那条
+   高亮放大 + 一点点小礼花(克制)。数据来自 /api/live/status 的 dm_feed
+   (dm_router 记账: fire=已下发 / suggest=进确认条 / blocked=被闸门拦下 / deny=红线拒绝)。
+   ⚠️ 内容签名不变就不重画, 否则 1 秒一次的轮询会把命中动画每秒重播一遍。 */
+let cmdFxLastHit = 0, cmdFxEnterTs = 0, fxWasActive = false, fxDemoOn = false;
+/* 动作特效开关(2026-10-17 用户要求"能不能关掉"): 顶栏那颗 🎬 特效 药丸控制,
+   状态存 localStorage(刷新/重连后保持)。关掉时不渲染、并把已有行清空。 */
+const _fxq = new URLSearchParams(location.search).get("fx");     // ?fx=0/1 调试用(覆盖记忆值)
+let FX_ON = (_fxq === "0") ? false : ((_fxq === "1") ? true : (localStorage.getItem("s2s.stage.cmdFx") !== "0"));
+function fxApply(){
+  const box = $("cmdFx"), pill = $("fxPill");
+  if (box) box.style.display = FX_ON ? "" : "none";
+  if (pill) pill.textContent = FX_ON ? "🎬 特效 开" : "🎬 特效 关";
+  if (!FX_ON) cmdFxClear();
+}
+function fxToggle(){
+  FX_ON = !FX_ON;
+  try { localStorage.setItem("s2s.stage.cmdFx", FX_ON ? "1" : "0"); } catch(e){}
+  fxApply();
+  toast(FX_ON ? "动作特效已开（画面右侧滚动条）" : "动作特效已关（画面右侧不再显示）");
+}
+$("fxPill").addEventListener("click", fxToggle);
+const fxRows = new Map();     // ts → {el, born, kind, hit, idx}  (增量维护, 消散动画不被打断)
+const FX_KEEP = 7;            // 同时可见的历史指令条数上限
+const FX_GAP = 3;             // 行间距(px)
+
+function cmdFxMakeRow(it){
+  const d = document.createElement("div");
+  d.className = "row " + it.kind;
+  const mark = it.kind === "queued" ? "排队：" : it.kind === "fire" ? ""                                  // 真正执行: 不加符号(用户 2026-10-14)
+             : (it.kind === "suggest" ? "🧐 " : (it.kind === "deny" ? "🙅 " : ""));
+  d.textContent = mark + (it.name || it.text || "");
+  return d;
+}
+
+/* 命中牌内的"逐字浮现"(第 2 个华丽特效, 用户 2026-10-14): 每个字依次淡入(间隔 60ms) */
+function cmdFxType(el, text){
+  const t = (text || "").trim();
+  if (!t) return;
+  el.textContent = "";
+  [...t].forEach((ch, i)=>{
+    const s = document.createElement("span");
+    s.className = "ch";
+    s.textContent = ch;
+    s.style.animationDelay = (i * 0.06).toFixed(2) + "s";
+    el.appendChild(s);
+  });
+}
+function cmdFxBurst(el){
+  /* 命中爆发(用户 2026-10-14 多次调整): 环形冲击波 + 26 颗粒子(环形均匀迸发 + 下坠弧线)
+     + 两种形状(圆点 / 四角星✦) + 三色轮转(暖金 / 暖白 / 浅粉)
+     + **掺一点点暗红 #970804 当"余烬"**(用户觉得这个色好看但做边框太抢眼 → 放进粒子里, 每 6 颗 1 颗) */
+  const COLORS = ["#ffd98a", "#fffaf0", "#ffc9dd"];
+  const EMBER = "#970804";
+  const ring = document.createElement("i");
+  ring.className = "ring";
+  el.appendChild(ring);
+  setTimeout(()=>ring.remove(), 700);
+
+  const N = 26;
+  for (let i = 0; i < N; i++){
+    const s = document.createElement("i");
+    s.className = "spark";
+    // 环形均匀分布 + 抖动(避免随机角度一侧空)
+    const base = (360 / N) * i;
+    const a = (base + (Math.random() * 2 - 1) * 12) * Math.PI / 180;
+    const r = 20 + Math.random() * 42;
+    const dy = Math.sin(a) * r + 6 + Math.random() * 10;      // 略带回坠(像真礼花)
+    s.style.setProperty("--dx", (Math.cos(a) * r).toFixed(1) + "px");
+    s.style.setProperty("--dy", dy.toFixed(1) + "px");
+    const isEmber = (i % 6 === 3);                            // 26 颗里约 4 颗暗红余烬
+    const c = isEmber ? EMBER : COLORS[i % COLORS.length];
+    s.style.color = c;
+    const size = (3.5 + Math.random() * 3.5).toFixed(1) + "px";
+    if (i % 4 === 0){                                         // 每 4 颗一颗四角星
+      s.textContent = "✦";
+      s.style.fontSize = (7 + Math.random() * 4).toFixed(1) + "px";
+      s.style.background = "none";
+      s.style.textShadow = "0 0 6px currentColor";
+    } else {
+      s.style.width = size; s.style.height = size;
+      s.style.background = c;
+      // 暗红本身很暗, 用亮一档的红做辉光, 才有"余烬"感而不是黑点
+      s.style.boxShadow = isEmber ? "0 0 9px #d8452f" : "0 0 7px currentColor";
+    }
+    s.style.animationDelay = (Math.random() * 0.10).toFixed(2) + "s";
+    if (i % 3 === 0) s.classList.add("trail");                // 拖尾(第 3 个华丽特效): 约 1/3 的粒子带光尾
+    el.appendChild(s);
+    setTimeout(()=>s.remove(), 1100);
+  }
+}
+function cmdFxRender(feed){
+  const box = $("cmdFx"); if (!box || !feed) return;
+  if (!FX_ON) return;                          // 开关关掉时不渲染(用户 2026-10-17)
+  const recent = (feed.recent || []).slice(-FX_KEEP);
+  const last = feed.last || {};
+  const now = Date.now() / 1000;
+  const live = new Set();
+  // ① 新增(节点**就地增量添加**, 不整块重画 → 位置/消散动画不被打断)
+  for (const it of recent){
+    live.add(it.ts);
+    if (!fxRows.has(it.ts)){
+      const el = cmdFxMakeRow(it);
+      // 入场交给逐帧插值(从下方滑入+淡入), 不再用 CSS 动画 —— CSS 动画的 transform/opacity 会
+      // 覆盖内联样式(fill-mode: both), 正是"跳"和"看不见消散"的根因(2026-10-14 两次踩坑)
+      fxRows.set(it.ts, {el, born: now, kind: it.kind, hit: false, idx: 0, y: null, o: null, s: null});
+      box.appendChild(el);
+    }
+  }
+  // ② 命中: 最近一次 fire 是新出现的 → 高亮放大 + 礼花(2.6s 后也让它消散, 别一直显眼)
+  const lastTs = last.ts || 0;
+  if (lastTs > cmdFxLastHit){
+    cmdFxLastHit = lastTs;
+    const r = fxRows.get(lastTs);
+    if (r){ r.hit = true; r.hitUntil = now + 2.6; r.born = now; r.s = 0.80;
+            r.el.className = "row hit"; cmdFxType(r.el, r.el.textContent); cmdFxBurst(r.el); }
+  }
+  // ③ 掉出窗口的行: 交给逐帧循环消散(不硬删, 否则会"啪"地消失)
+  for (const [ts, r] of [...fxRows]){
+    if (live.has(ts)) continue;
+    r.gone = true;
+  }
+  // ④ 防御: 万一有泄漏, 只保留最近 12 行(正常只会有 7 行左右)
+  if (fxRows.size > 12){
+    const ks = [...fxRows.keys()].sort((a, b) => a - b);
+    for (const ts of ks.slice(0, fxRows.size - 12)){
+      const r = fxRows.get(ts); if (r) r.el.remove();
+      fxRows.delete(ts);
+    }
+  }
+}
+
+/* ── 逐帧动效循环(2026-10-14 改): 位置/缩放/透明度全部用 lerp 逼近目标 → 60fps 丝滑上浮。
+   根因: 原来用 150ms 定时器 + flex 瞬时重排, 看着是"跳"不是"滑"。 ── */
+function fxFrame(){
+  // 生产环境优化: 页面切到后台/最小化时不烧 CPU(rAF 本身会被节流, 这里再兜一层)
+  if (document.hidden){ requestAnimationFrame(fxFrame); return; }
+  const box = $("cmdFx");
+  if (box && fxRows.size){
+    const H = box.clientHeight || 172;
+    const now = Date.now() / 1000;
+    const list = [...fxRows.entries()].sort((a, b) => a[0] - b[0]);   // 旧 → 新
+    const n = list.length;
+    let cursor = H;                                                   // 从底部往上排(最新在底)
+    for (let i = n - 1; i >= 0; i--){                                 // 新 → 旧
+      const [ts, r] = list[i];
+      const idx = n - 1 - i;                                          // 0 = 最新
+      const h = r.el.offsetHeight || 21;
+      const targetY = cursor - h;
+      let targetO, targetS = 1, extraUp = 0;
+      if (r.hit){                                                     // 命中牌: 高亮 2.6s → 消散
+        if (now >= (r.hitUntil || 0)){
+          // 消散时长 5.8s(2026-10-14 用户反馈"命中牌比普通指令消失得快"→ 统一为总寿命 ≈8.4s:
+          // 普通最新条 = 2.2s 清晰 + 6.2s 消散; 命中牌 = 2.6s 高亮 + 5.8s 消散)
+          const hp = Math.min(1, (now - r.hitUntil) / 5.8);
+          r.fading = true;
+          targetO = Math.max(0, 1 - hp); extraUp = -hp * 14; targetS = 1.06 - hp * 0.10;
+          if (Math.random() < 0.10 + hp * 0.75) cmdFxDust(r.el);
+          if (hp >= 1){ r.el.remove(); fxRows.delete(ts); cursor = targetY - FX_GAP; continue; }
+        } else { targetO = 1; targetS = 1.06; }
+      } else {                                                        // 普通 / 历史行
+        const age = now - r.born;
+        const life = r.gone ? 0.6 : Math.max(1.8, 6.2 - idx * 0.9);   // 越靠上寿命越短
+        const hold = idx === 0 ? 2.2 : (idx === 1 ? 0.8 : 0);
+        const p = Math.min(1, Math.max(0, (age - hold) / life));
+        const base = idx === 0 ? 1 : (idx === 1 ? 0.78 : (idx === 2 ? 0.6 : 0.44));
+        targetO = Math.max(0, base * (1 - p)); extraUp = -p * 14; targetS = 1 - p * 0.10;
+        if (p > 0 && Math.random() < 0.10 + p * 0.75 + idx * 0.05) cmdFxDust(r.el);
+        if (p >= 1){ r.el.remove(); fxRows.delete(ts); cursor = targetY - FX_GAP; continue; }
+      }
+      const k = 0.18;                                                 // 收敛系数(≈0.3s 落定)
+      r.y = (r.y == null) ? targetY + 20 : r.y + (targetY + extraUp - r.y) * k;   // 新行自下方滑入
+      r.o = (r.o == null) ? 0 : r.o + (targetO - r.o) * k;
+      r.s = (r.s == null) ? 0.86 : r.s + (targetS - r.s) * k;
+      r.el.style.transform = "translateY(" + r.y.toFixed(1) + "px) scale(" + r.s.toFixed(3) + ")";
+      r.el.style.opacity = r.o.toFixed(3);
+      // ⚠️ 绝不能在这里按"当前透明度 ≤ 0.02 就删" —— 新行初始透明度就是 0, 第一帧就被自己删掉,
+      //    表现为"只有命中牌能留下, 待确认/被拒绝/历史行全都不见了"(2026-10-14 踩坑)。
+      //    删除只由上面的 p>=1 / hp>=1(消散走完)以及 cmdFxClear 负责。
+      cursor = targetY - FX_GAP;
+    }
+  }
+  requestAnimationFrame(fxFrame);
+}
+requestAnimationFrame(fxFrame);
+
+/* 命中瞬间的"全屏极短泛光"已按用户要求撤掉(2026-10-14); 改为命中牌内的逐字浮现 */
+
+/* 消散逻辑已并入上面的逐帧循环 fxFrame()（150ms 定时器版已废弃删除, 避免两套逻辑打架） */
+
+/* 一颗"消散粒子": 从行内随机位置向斜上方飘散(带一点随机大小/亮度, 才像"化开") */
+function cmdFxDust(el){
+  const s = document.createElement("i");
+  s.className = "dust";
+  // 三色 + 少量暗红余烬(6 颗里约 1 颗, 用亮红辉光保证看得见)
+  const ember = Math.random() < 1 / 6;
+  const c = ember ? "#970804" : ["#ffd98a", "#fffaf0", "#ffc9dd"][Math.floor(Math.random() * 3)];
+  s.style.color = c; s.style.background = c;
+  if (ember) s.style.boxShadow = "0 0 6px #d8452f";
+  s.style.left = (6 + Math.random() * 86).toFixed(0) + "%";
+  s.style.top = (18 + Math.random() * 62).toFixed(0) + "%";
+  s.style.setProperty("--dx", (Math.random() * 26 - 10).toFixed(1) + "px");
+  s.style.setProperty("--dy", (-(12 + Math.random() * 22)).toFixed(1) + "px");
+  const sz = (2.4 + Math.random() * 2.6).toFixed(1) + "px";
+  s.style.width = sz; s.style.height = sz;
+  el.appendChild(s);
+  setTimeout(()=>s.remove(), 820);
+}
+
+function cmdFxClear(){
+  const b = $("cmdFx"); if (b) b.replaceChildren();
+  try { fxRows.clear(); } catch(e) { /* fxRows 尚未初始化(启动早期) → 忽略 */ }
+  cmdFxLastHit = 0; cmdFxEnterTs = 0;
+}
+
+/* ── 特效演示(?fxdemo=1, 2026-10-14): 未开播/收工后想看效果时用 ──
+   纯前端假数据, 走**同一条渲染路径**(cmdFxRender) → 看到的动画与直播时完全一致;
+   不需要连线、不需要 Vidu、不需要 TTS/OmniVoice。循环播放一整套指令流水样式。
+   用法: http://127.0.0.1:8795/stage?fxdemo=1 */
+(function fxDemo(){
+  if (!/fxdemo/.test(location.search)) return;
+  fxDemoOn = true;
+  // 演示模式图例(只在 ?fxdemo=1 出现; 直播画面不会有) —— 回答"灰色是什么"这类问题
+  try {
+    const lg = document.createElement("div");
+    lg.id = "fxLegend";
+    lg.innerHTML = '<b>🧪 演示模式 · 图例</b><br>'
+      + '🌸 <b style="color:#DFBE96;border:1px solid rgba(238,160,140,.45);border-radius:6px;padding:0 4px">沙金牌</b> = 刚下发的动作(2.6s 后也消散)<br>'
+      + '🧐 = 已提取成指令, 等你点确认<br>'
+      + '🙅 + 横线 = 红线拒绝(脱衣/色情等)<br>'
+      + '<span style="color:#8b9bb0">灰色小字</span> = 被拦下: 冷却中 / 该动作刚做过<br>'
+      + '<span style="color:#93a7c0">普通小字</span> = 历史指令, 正在化粒子消散';
+    const wrap = $("videoWrap");
+    if (wrap) wrap.appendChild(lg);
+  } catch(e){}
+  const SEQ = [
+    {kind:"blocked", text:"吃哈密瓜",       name:"吃哈密瓜",       source:"t2"},
+    {kind:"suggest", text:"戴上红色凤冠",   name:"戴上红色凤冠",   source:"T2"},
+    {kind:"fire",    text:"捧脸杀",         name:"捧脸杀",         source:"t2"},
+    {kind:"blocked", text:"转一圈",         name:"转一圈",         source:"t2"},
+    {kind:"fire",    text:"对镜头比心",     name:"对镜头比心",     source:"t2"},
+    {kind:"deny",    text:"换衣服",         name:"",               source:"t2"},
+    {kind:"fire",    text:"凑近眨眼比耶",   name:"凑近眨眼比耶",   source:"t0"},
+    {kind:"fire",    text:"戳脸颊卖萌",     name:"戳脸颊卖萌",     source:"manual"},
+    {kind:"blocked", text:"甩头发",         name:"甩头发",         source:"t2"},
+    {kind:"fire",    text:"对镜头画一颗心", name:"对镜头画一颗心", source:"t2"},
+  ];
+  const recent = []; let ts = Date.now() / 1000, last = {}, i = 0;
+  setInterval(()=>{
+    const it = Object.assign({ts: (ts += 2.4)}, SEQ[i++ % SEQ.length]);
+    recent.push(it);
+    if (recent.length > 7) recent.shift();
+    if (it.kind === "fire") last = it;          // 只有真正执行(fire)才高亮+礼花
+    cmdFxRender({recent, last});
+  }, 2400);
+  setTimeout(()=>toast("🎬 特效演示中(?fxdemo=1): 每 2.4 秒一条, 命中的那条放大 + 小礼花"), 700);
+})();
+
+/* ───────── 轮询状态/字幕 ───────── */
+async function poll(){
+  try{
+    const st = await api("/api/live/status?since=" + state.since);
+    state.phase = st.phase;
+    const pill = $("phasePill");
+    pill.className = "pill " + (st.active ? "live" : (st.error ? "err" : ""));
+    pill.textContent = st.active ? (st.mode === "managed" ? "直播中 · 托管RTC" : "直播中 · 自备RTC")
+                     : (st.phase === "creating" ? "会话创建中…" : (st.error ? "错误" : "未连线"));
+    if (st.record && st.record.enabled && st.active) pill.textContent += " · ⏺";   // 本场在录
+    const source = st.danmaku_source || {};
+    const dp = $("danSourcePill");
+    dp.style.display = source.enabled ? "" : "none";
+    if (source.enabled){
+      dp.title = "订阅房间：" + (source.room_id || "未设置")
+        + "\n累计收到聊天：" + ((source.counts||{}).chat || 0)
+        + "，礼物：" + ((source.counts||{}).gift || 0)
+        + "，关注：" + ((source.counts||{}).follow || 0);
+      const closed = ["closed", "stopped", "error"].includes(source.room_status);
+      dp.textContent = source.state === "connected"
+        ? (closed ? "弹幕 · 采集已关闭" : (source.room_status === "live" ? "弹幕 · 已连接" : "弹幕 · 已订阅"))
+        : "弹幕 · 连接中";
+      dp.className = "pill" + (source.state === "connected" && source.room_status === "live" ? " live" : "");
+    }
+    const response = st.response || {};
+    const responseStage = response.stage || (st.speaking ? "preparing" : "idle");
+    const target = response.target ? " · " + response.target.slice(0, 12) : "";
+    $("speakPill").style.display = responseStage !== "idle" ? "" : "none";
+    $("speakPill").textContent = responseStage === "sending_audio" ? "语音发送中" + target
+      : responseStage === "queued" ? "弹幕待回应 · " + response.pending : "正在准备回复" + target;
+    const turn = response.turn || {};
+    $("speakPill").title = (turn.input_excerpt ? "本轮内容：" + turn.input_excerpt + "\n" : "")
+      + (turn.total_first_audio_ms != null ? "本轮到首段语音发送：" + (turn.total_first_audio_ms / 1000).toFixed(2) + " 秒\n" : "")
+      + "语音已发送不代表远端画面已经播完";
+    // ⏺ 录播进度(2026-10-23): 封盘→下载→完成 各提示一次(由桥端 _fetch_recording 驱动)
+    if (st.record){
+      const rs = st.record.state || "";
+      // ⚠ 不能用 st.record.enabled 覆盖开关状态 —— 那是"本场会话"是否在录(建会话时定格),
+      //   和 config 里的开关(下一场生效)不是一回事, 之前这里会把用户刚点开的按钮又刷回"关"。
+      //   本场是否在录只体现在顶栏 pill 的 " · ⏺" 上。
+      if (rs !== recState){
+        recState = rs;
+        if (rs === "downloading") toast("⏺ 录播封盘完成，开始下载…");
+        else if (rs === "done") toast("⏺ 录播已保存：" + ((st.record.files || []).map(f => f.name).join("、") || ""));
+        else if (rs === "error") toast("⏺ 录播失败：" + (st.record.error || "未知"), true);
+        else if (rs === "empty") toast("⏺ 服务端没有产出录播文件", true);
+      }
+    }
+    // 点播高亮镜像: speaking_text = "[文件] xxx"
+    const np = (st.speaking && st.speaking_text || "").startsWith("[文件] ") ? st.speaking_text.slice(5) : null;
+    if (np !== songPlaying){ songPlaying = np; if ($("songs").classList.contains("open")) renderSongs(); }
+    capSuppress(!!np);                                  // 放歌 → 画面字幕层让位歌词面板; 歌停/停止演唱 → 贴回来
+    capLyricSet = new Set(st.caption_lines || []);       // 歌词行永不上画面(安全网)
+    const bsStop = $("btnStopSong");
+    if (bsStop) bsStop.classList.toggle("on", !!np);   // 演唱中 → 红色高亮提示可停
+    // 歌词面板(音乐软件式滚动): 历史行上滚缩小渐隐, 当前行高亮
+    const lbox = $("lyricBox");
+    const lns = st.caption_lines, cidx = st.caption_idx;
+    if (st.speaking && lns && lns.length && cidx != null){
+      const sig = lns.length + "|" + lns[0] + "|" + lns[lns.length - 1];
+      if (lbox.dataset.sig !== sig){
+        lbox.dataset.sig = sig;
+        const inner = document.createElement("div"); inner.className = "lycInner";
+        for (const t of lns){ const d = document.createElement("div"); d.className = "lyc"; d.textContent = t; inner.appendChild(d); }
+        lbox.replaceChildren(inner);
+      }
+      lbox.style.display = "";
+      const inner = lbox.firstChild;
+      inner.style.transform = `translateY(${128 - cidx * 44}px)`;   // 当前行居中(行高44, 面板308)
+      [...inner.children].forEach((el, k) => el.classList.toggle("on", k === cidx));
+    } else { lbox.style.display = "none"; lbox.dataset.sig = ""; }
+    if (!st.active) capClear();        // 未连线/已挂断 → 清掉画面内残留字幕(否则会盖在遮罩上)
+    if (st.dm_feed && !fxDemoOn) cmdFxRender(st.dm_feed);   // 动作指令特效(中间偏右): 滚动 + 命中高亮 + 小礼花
+    // 只在"连线 → 断开"这一刻清一次(2026-10-14 改): 原来每次轮询 !active 就清,
+    // 导致未连线时看不到效果(?fxdemo=1 演示模式与收工后回看都会被秒清)。
+    if (fxWasActive && !st.active && !fxDemoOn) cmdFxClear();
+    fxWasActive = !!st.active;
+    const vp = $("voicePill");
+    vp.style.display = "";
+    vp.textContent = "🎙 " + (st.voice || "?");
+    if (st.transcripts_total != null && st.transcripts_total < state.since) state.since = 0;   // 桥重启过(tr_total 归零) → 游标重置, 否则新字幕全被旧游标挡掉(2026-10-13)
+    if (st.new_transcripts) for (const t of st.new_transcripts){ state.since = Math.max(state.since, t.i); trAdd(t.role, t.text, t.role + ":" + t.i, t.event_key); }
+    if (!st.active && state.liveId){
+      // 会话结束
+      const end = st.ended || {};
+      trAdd("sys", "会话已结束(" + (end.reason||st.phase) + ")" +
+        (end.billed_seconds != null ? ` · 计费 ${end.billed_seconds}s` : "") +
+        (end.credits_cost != null ? ` · ${end.credits_cost} 积分` : ""));
+      resetUi();
+    }
+    if (st.error && st.phase === "idle" && !state.liveId){
+      pill.className = "pill err"; pill.textContent = "错误";
+    }
+  }catch(e){ /* 网络抖动忽略, 下一轮再试 */ }
+}
+
+function resetUi(){
+  ++state.rtcGeneration;
+  state.busy = false;
+  clearInterval(state.timerTimer);
+  state.liveId = null; state.rtc = null; state.since = 0;
+  $("btnStop").style.display = "none";
+  $("mask").style.display = "";
+  showAvatarStill(true);
+  $("maskCap").textContent = "已结束。点「开始连线」重新开一场。";
+  $("btnGo").disabled = false;
+  $("timerPill").style.display = "none";
+  leaveRtc();
+}
+
+/* ───────── 发送 / 打断 / 点播 ───────── */
+async function sendChatText(t){
+  if (!t) return false;
+  if (!state.liveId){ toast("先连线再聊", true); return false; }
+  try{ await api("/api/chat", {method:"POST", body:JSON.stringify({content:t})}); return true; }
+  catch(e){ toast("发送失败: " + (e.message||e), true); return false; }
+}
+async function sendCmdText(t, silent){
+  if (!t) return false;
+  if (!state.liveId){ toast("先连线再聊天", true); return false; }
+  try{
+    const r = await api("/api/cmd", {method:"POST", body:JSON.stringify({text:t, silent:!!silent})});
+    /* 2026-10-16: 动作指令最小间隔(song_action_gap_s 唱歌中 / action_gap_s 其余)。
+       间隔内的点击会被"最新优先"合并 → 返回 "sent"(真发出) / "deferred"(被合并到最新一条)。
+       2026-10-17: silent=true(随机表演) → 桥侧不写字幕流/不亮特效/不计 Top10。 */
+    return (r && r.deferred) ? "deferred" : "sent";
+  }
+  catch(e){ toast("指令失败: " + (e.message||e), true); return false; }
+}
+/* 让某条动作的 chip 闪一下: sent=金色(真发出) / merged=琥珀(被合并, 没真发)。
+   随机表演和手动点击共用 → 面板上"哪条在动"始终看得见。 */
+function flashChip(cmd, r){
+  const cls = r === "sent" ? "sent" : (r === "deferred" ? "merged" : "");
+  if (!cls) return;
+  const b = [...document.querySelectorAll("#cmdGrid button.chip")].find(x => x.dataset.cmd === cmd);
+  if (!b) return;
+  b.classList.add(cls); setTimeout(()=>b.classList.remove(cls), 900);
+}
+async function sendChat(){
+  const t = $("txt").value.trim();
+  if (!t) return;
+  if (!state.liveId){ toast("先连线再聊", true); return; }
+  $("txt").value = "";
+  await sendChatText(t);
+}
+$("btnSend").addEventListener("click", sendChat);
+$("txt").addEventListener("keydown", e=>{ if (e.key === "Enter") sendChat(); });
+
+/* ───────── 直发输入框(2026-10-11): 右下角, 与快捷指令同通道 ─────────
+   POST /api/cmd → engine.cmd() → type9 直发 Vidu, 不经 LLM/TTS/队列,
+   她默默做动作。未连线时提示; 成功轻提示(动作本身是静默的, 需要确认感)。 */
+async function sendCmd(){
+  const t = $("txtCmd").value.trim();
+  if (!t) return;
+  if (!state.liveId){ toast("先连线再发指令", true); return; }
+  $("txtCmd").value = "";
+  const r = await sendCmdText(t);
+  if (r === "sent") toast("已直发 Vidu ✓");
+  else if (r === "deferred") toast("唱歌中 · 已合并到最新一条", true);
+}
+$("btnCmdSend").addEventListener("click", sendCmd);
+$("txtCmd").addEventListener("keydown", e=>{ if (e.key === "Enter") sendCmd(); });
+
+/* ───────── 快捷指令面板(2026-10-11): 点击=type9 直发 Vidu, 她默默做动作 ─────────
+   走 /api/cmd → engine.cmd() → sig.send_input_text(type9), 不经 LLM/TTS/队列
+   (用户 2026-10-11 拍板: 指令不让 LLM 知道; 动作匹配在 Vidu 侧)。
+   动作命中依赖连线时的动作库(config action.enabled=true + library_id)。
+   2026-10-12 重构(用户拍板): 8 组→4 组(吃喝/拿出/动作外表/拟人化), 语义去重
+   (对镜头比心/眨单眼/举杯奶茶/毛笔画爱心飞吻 移除), chip 支持短标签≠发送文本
+   [label,cmd](发送文本=库内动作原名, 保证精确命中), 新增「照镜子补口红」组合动作,
+   库内已有但没上过面板的(喷嚏/惊讶捂嘴/掩面害羞/说悄悄话/雨伞)补进分类。
+   2026-10-12 定位纠偏(用户点醒): 动作库=待机动作库(连线后 Vidu 让人物自然做小动作),
+   不是指令容器 → 自建库只留拟人化动作(含新增 13 个), 吃喝/拿出/外表等表演类
+   一律不入库, 命令通道直发(喝奶茶映射解除, 直接发"喝奶茶")。 */
+const CMD_GROUPS = [
+  // 2026-10-18 按全量统计（24 场 / 34.6 万条弹幕）重排：高频组在前，「拿出X」道具类整体挪到最后
+  ["🍉 吃喝", ["吃西瓜","吃榴莲","吃棒棒糖","吃雪糕","吃苹果","吃汉堡","吃薯条","吃饺子","吃小龙虾","喝可乐","嗑瓜子","吃泡面","吃葡萄","喝奶茶"]],
+  ["💇 动作外表", ["双马尾",["头发别到耳后","别头发"],"高马尾","扎丸子头","甩头发","戴上蝴蝶结发夹","编辫子","反戴棒球帽","绕头发","拿出墨镜戴上","涂口红"]],
+  ["🎭 拟人化动作", [
+    // 示例：只保留 10 条（随机抽样）。其余动作请在舞台页「✏️ 编辑」里自行添加/命名
+    "托腮发呆",
+    "捂嘴偷笑",
+    "抚摸肩颈",
+    "对镜头竖大拇指",
+    ["鬼脸","akanbe"],
+    "张开双臂求抱抱",
+    "凑近亲镜头",
+    "飞吻",
+    "戴上红色凤冠",
+    "拿出琵琶",
+  ]],
+  // 🎁 拿出：2026-10-20 用户拍板精简到 8 个高频道具（其余不再占面板，交给弹幕/T2 自动生成）
+  //    动作库里的 32 个道具动作仍然在，弹幕说“拿出乌龟”照样能被 T0/T2 触发，只是手点面板不再铺满
+  ["🎁 拿出（常用 8 个 · 其余交给模型自动生成）", ["拿出哆啦A梦","拿出奥特曼玩偶","拿出皮卡丘玩偶","拿出一束花","拿出小蛋糕","拿出手机自拍","拿出一只猫","拿出一只小狗"]],
+];
+/* ───────── 🎲 拟人化「随机表演」(2026-10-16 用户点单) ─────────
+   点开后按固定间隔从「🎭 拟人化动作」组里挑一条直发 Vidu(走 /api/cmd, 与手点同通道),
+   **越靠前的被选中概率越高**: 强=1/排名 · 中=1/√排名 · 均等=等概率。
+   纯前端功能(桥零改动); **运行状态不持久化** —— 刷新页面即关闭(防意外自动点)。
+   注意: 桥侧有动作最小间隔(action_gap_s 4s / 唱歌中 6s), 间隔选得比它短会被合并。 */
+const RND = {
+  on:false, every:10, bias:"strong", timer:null, tick:null, nextAt:0, pool:[], last:"",
+  load(){ try{
+    const e = parseInt(localStorage.getItem("s2s.stage.rndEvery") || "", 10);
+    if (e >= 4 && e <= 180) this.every = e;
+    const b = localStorage.getItem("s2s.stage.rndBias");
+    if (b === "soft" || b === "flat" || b === "strong") this.bias = b;
+  }catch(e){} },
+  save(){ try{
+    localStorage.setItem("s2s.stage.rndEvery", String(this.every));
+    localStorage.setItem("s2s.stage.rndBias", this.bias);
+  }catch(e){} },
+  weight(rank){ return this.bias === "flat" ? 1 : (this.bias === "soft" ? 1/Math.sqrt(rank) : 1/rank); },
+  biasName(){ return this.bias === "flat" ? "均等" : (this.bias === "soft" ? "中等偏好" : "越前越常出"); },
+  pick(){                     // 加权抽取(排名从 1 开始); 上一次那条直接剔出候选 → 绝不连着做同一条
+    const all = this.pool; if (!all.length) return "";
+    const pool = (all.length > 1 && this.last) ? all.filter(c => c !== this.last) : all;
+    let total = 0; for (let i = 0; i < pool.length; i++) total += this.weight(this.rankOf(pool[i]) + 1);
+    let r = Math.random() * total;
+    for (let i = 0; i < pool.length; i++){
+      r -= this.weight(this.rankOf(pool[i]) + 1);
+      if (r <= 0){ this.last = pool[i]; return pool[i]; }
+    }
+    this.last = pool[pool.length - 1]; return this.last;
+  },
+  rankOf(cmd){ return this.pool.indexOf(cmd); },   // 用**原始排名**算权重(剔掉那条不影响别人的优先级)
+  async fire(){
+    const cmd = this.pick(); if (!cmd) return;
+    const r = await sendCmdText(cmd, true);      // silent: 不写字幕/不亮特效/不计 Top10(用户 2026-10-17)
+    if (r === false){ this.stop(); toast("随机表演已停（未连线或发送失败）", true); return; }
+    flashChip(cmd, r);
+    this.nextAt = Date.now() + this.every * 1000;
+    this.sync();
+  },
+  start(){
+    if (this.on) return;
+    if (!state.liveId){ toast("先连线再开随机表演", true); return; }
+    if (!this.pool.length){ toast("拟人化动作列表为空", true); return; }
+    this.on = true; this.last = ""; this.nextAt = Date.now() + this.every * 1000;
+    this.timer = setInterval(()=>{ this.nextAt = Date.now() + this.every * 1000; this.fire(); },
+                             this.every * 1000);
+    this.tick = setInterval(()=>this.sync(), 500);
+    this.sync();
+    trAdd("sys", `🎲 随机表演开始：每 ${this.every}s 从拟人化动作(${this.pool.length} 条)里挑一条 · 权重=${this.biasName()}`);
+  },
+  stop(){
+    if (!this.on) return;
+    this.on = false;
+    if (this.timer) clearInterval(this.timer);
+    if (this.tick) clearInterval(this.tick);
+    this.timer = this.tick = null;
+    this.sync();
+    trAdd("sys", "🎲 随机表演已停");
+  },
+  sync(){
+    const btn = $("rndBtn"), sel = $("rndEvery"), bs = $("rndBias"), badge = $("rndBadge");
+    if (sel && document.activeElement !== sel) sel.value = String(this.every);
+    if (bs && document.activeElement !== bs) bs.value = this.bias;
+    const left = Math.max(0, Math.ceil((this.nextAt - Date.now()) / 1000));
+    if (btn){
+      btn.classList.toggle("on", this.on);
+      btn.textContent = this.on ? `⏹ 随机中 · ${left}s` : "🎲 随机表演";
+      btn.title = this.on ? "点击停止随机表演"
+                          : `按「${this.biasName()}」的权重, 从本组里随机挑一条执行`;
+    }
+    if (badge){
+      badge.style.display = this.on ? "" : "none";
+      if (this.on) badge.textContent = `🎲 随机表演 ${this.every}s · 下一个 ${left}s ✕`;
+    }
+  },
+};
+RND.load();
+$("rndBadge").addEventListener("click", ()=> RND.stop());   // 顶栏指示条点一下也能停(面板没开着时用)
+/* ───────── ✏️ 快捷指令自定义(2026-10-20 用户要求: 拟人化动作组可随意删/挪) ─────────
+   只保存在本浏览器(localStorage `s2s.stage.cmdEdits`), 不动源码里的 CMD_GROUPS、也不改动作库。
+   编辑模式下点 chip **不会发送**(防直播误点); 拖拽改顺序(顺序即「🎲 随机表演」的权重),
+   点 × 隐藏; 每组底部"已隐藏 N 条"可点回。 */
+// 🏷 英文动作 id → 极短中文标签(2026-10-20 用户要求: 手动加的动作改成一两个字, 直播时一眼找到)
+// 只改**显示名**, 发送给 Vidu 的仍是原 id(cmd 不变)。本地在编辑模式下双击 chip 还能再改自己的。
+const CMD_LABELS = {
+  fingerHeart: "比心", okSign: "OK", palmFistGreeting: "抱拳", pawPose: "猫爪",
+  rabbitPose: "兔耳", threeFingerSalute: "三指", doubleV: "双V", rockOn: "摇滚",
+  "hand-over-heart": "捂心", "vulcan salute": "瓦肯", "peace sign": "剪刀手",
+  thumbsUp: "点赞", thumbsup: "点赞", clap: "鼓掌", wave: "挥手", salute: "敬礼",
+  shrug: "耸肩", think: "思考", namaste: "合十", fist: "握拳", pointUp: "指上",
+  heartHands: "比心手", fingerGun: "手枪手", micDrop: "丢麦", dab: "Dab", ok: "OK",
+  smile: "微笑", wink: "眨眼", nod: "点头", shakeHead: "摇头", laugh: "笑",
+  cry: "哭", surprise: "惊讶", shy: "害羞", angry: "生气", dance: "跳舞",
+};
+const CMD_EDITS = (()=>{ try{ return JSON.parse(localStorage.getItem("s2s.stage.cmdEdits") || "{}") || {}; }catch(e){ return {}; } })();
+let CMD_EDIT = false;
+let CMD_DRAG = null;                      // 正在拖的 {cmd, group}(跨组拖拽要它)
+function cmdSaveEdits(){
+  try{ localStorage.setItem("s2s.stage.cmdEdits", JSON.stringify(CMD_EDITS)); }catch(e){}
+  cmdFlashSaved();
+}
+function cmdStats(){
+  const gs = Object.keys(CMD_EDITS);
+  let rm = 0, ad = 0, od = 0;
+  for (const g of gs){
+    const e = CMD_EDITS[g] || {};
+    rm += (e.removed || []).length; ad += (e.added || []).length;
+    if ((e.order || []).length) od++;
+  }
+  return { groups: gs.length, removed: rm, added: ad, reordered: od };
+}
+function cmdFlashSaved(){
+  const t = $("cmdEditTip"); if (!t) return;
+  const st = cmdStats();
+  const txt = (st.groups ? `已自动保存 ✓ 自定义 ${st.groups} 组 · 隐藏 ${st.removed} · 新增/移入 ${st.added} · 改序 ${st.reordered} 组`
+                         : "已自动保存 ✓（无自定义）");
+  t.textContent = txt; t.style.color = "#DFBE96";
+  clearTimeout(cmdFlashSaved._t);
+  cmdFlashSaved._t = setTimeout(()=>{ t.style.color = ""; cmdSyncEditUI(); }, 2200);
+}
+// 英文 id 的常见词根(用于自动生成短中文名; 只影响显示)
+const CMD_WORDS = {
+  heart: "心", hand: "手", hands: "手", fist: "拳", palm: "掌", greeting: "礼",
+  sign: "势", pose: "姿", rabbit: "兔", paw: "爪", finger: "指", fingers: "指",
+  three: "三", two: "二", one: "一", double: "双", v: "V", salute: "礼",
+  vulcan: "瓦肯", rock: "摇滚", wave: "挥", point: "指", up: "上", down: "下",
+  thumbs: "拇", clap: "掌", think: "思", nod: "点", shake: "摇", head: "头",
+  smile: "笑", laugh: "笑", cry: "哭", shy: "羞", angry: "怒", dance: "舞",
+  own: "", in: "", on: "", hair: "发", face: "脸", eyes: "眼", wink: "眨眼",
+  ok: "OK", fingerheart: "比心", hug: "抱", kiss: "亲", love: "爱",
+};
+function cmdAutoLabel(id){
+  const raw = String(id || "");
+  const parts = raw.replace(/([a-z0-9])([A-Z])/g, "$1 $2").split(/[\s\-_]+/).filter(Boolean);
+  let out = "";
+  for (const w of parts){
+    const cn = CMD_WORDS[w.toLowerCase()];
+    if (cn) out += cn;                 // 只拼中文; 不认识的英文词不参与(避免出现"手in"这种)
+    if (out.length >= 3) break;
+  }
+  if (out) return out.slice(0, 3);
+  return String(raw).replace(/[_\-]/g, " ").slice(0, 6);   // 全是不认识的词 → 原样取前 6 字
+}
+function cmdLabelFor(title, cmd, fallback){
+  const e = CMD_EDITS[title] || {};
+  const custom = (e.labels || {})[cmd];
+  if (custom) return custom;
+  // ⚠ 顺序: 自定义改名 > **组里手写的 label**(中文短名) > 内置映射 > 英文自动拼 > 原名
+  if (fallback && fallback !== cmd) return fallback;
+  if (CMD_LABELS[cmd]) return CMD_LABELS[cmd];
+  // 未收录的英文 id: 自动拼一个短中文(只影响显示, 发送仍是原 id)
+  if (/^[A-Za-z0-9\s\-_]+$/.test(String(cmd)) && !/[\u4e00-\u9fff]/.test(String(cmd))){
+    return cmdAutoLabel(cmd);
+  }
+  return fallback || cmd;
+}
+function cmdSetLabel(title, cmd, label){
+  const e = (CMD_EDITS[title] || (CMD_EDITS[title] = {}));
+  const m = e.labels || (e.labels = {});
+  if (label) m[cmd] = label; else delete m[cmd];
+  cmdSaveEdits();
+}
+function cmdDefaults(title){
+  const g = CMD_GROUPS.find(x => x[0] === title);
+  return g ? g[1].map(c => Array.isArray(c) ? { label: c[0], cmd: c[1] } : { label: c, cmd: c }) : [];
+}
+function cmdLabelOf(cmd){
+  for (const [title, list] of CMD_GROUPS){
+    for (const c of list){
+      const it = Array.isArray(c) ? { label: c[0], cmd: c[1] } : { label: c, cmd: c };
+      if (it.cmd === cmd) return it.label;
+    }
+  }
+  return cmd;
+}
+function cmdAddedList(title){
+  return ((CMD_EDITS[title] || {}).added || []).map(x => typeof x === "string" ? { label: cmdLabelOf(x), cmd: x } : { label: x.label || x.cmd, cmd: x.cmd });
+}
+// 本组"候选全集" = 出厂项 + 别组移进来/新建的项
+function cmdAllItems(title){
+  const items = cmdDefaults(title).slice();
+  for (const it of cmdAddedList(title)) if (it.cmd && !items.some(y => y.cmd === it.cmd)) items.push(it);
+  return items;
+}
+function cmdEffective(title){
+  const items = cmdAllItems(title), e = CMD_EDITS[title] || {};
+  const removed = new Set(e.removed || []);
+  const left = new Map(items.map(x => [x.cmd, x]));
+  const out = [];
+  for (const c of (e.order || [])) if (left.has(c) && !removed.has(c)){ out.push(left.get(c)); left.delete(c); }
+  for (const x of items) if (left.has(x.cmd) && !removed.has(x.cmd)){ out.push(x); left.delete(x.cmd); }
+  return out;
+}
+function cmdRemovedList(title){ return ((CMD_EDITS[title] || {}).removed || []).filter(Boolean); }
+function cmdSetOrder(title, order){ (CMD_EDITS[title] || (CMD_EDITS[title] = {})).order = order; cmdSaveEdits(); }
+function cmdRemove(title, cmd){
+  const e = (CMD_EDITS[title] || (CMD_EDITS[title] = {}));
+  // 新建/移进来的项 → 直接从 added 里拿掉(彻底删); 出厂项 → 进"已隐藏"可恢复
+  const inAdded = (e.added || []).some(x => (typeof x === "string" ? x : x.cmd) === cmd);
+  if (inAdded){
+    e.added = (e.added || []).filter(x => (typeof x === "string" ? x : x.cmd) !== cmd);
+    e.order = (e.order || []).filter(x => x !== cmd);
+  } else {
+    const s = new Set(e.removed || []); s.add(cmd); e.removed = [...s];
+  }
+  cmdSaveEdits();
+}
+function cmdRestore(title, cmd){
+  const e = (CMD_EDITS[title] || (CMD_EDITS[title] = {}));
+  e.removed = (e.removed || []).filter(x => x !== cmd); cmdSaveEdits();
+}
+function cmdResetGroup(title){ delete CMD_EDITS[title]; cmdSaveEdits(); }
+// 跨组移动: 从源组的"显示/隐藏/追加"三处都摘掉, 放进目标组的 added
+function cmdMoveTo(srcGroup, dstGroup, cmd, orderArr){
+  if (!srcGroup || !dstGroup || srcGroup === dstGroup || !cmd) return false;
+  const eS = (CMD_EDITS[srcGroup] || (CMD_EDITS[srcGroup] = {}));
+  eS.added = (eS.added || []).filter(x => (typeof x === "string" ? x : x.cmd) !== cmd);
+  eS.order = (eS.order || []).filter(x => x !== cmd);
+  const sRem = new Set(eS.removed || []); sRem.add(cmd); eS.removed = [...sRem];
+  const eD = (CMD_EDITS[dstGroup] || (CMD_EDITS[dstGroup] = {}));
+  const ad = eD.added || [];
+  if (!ad.some(x => (typeof x === "string" ? x : x.cmd) === cmd)) ad.push({ label: cmdLabelOf(cmd), cmd });
+  eD.added = ad;
+  eD.removed = (eD.removed || []).filter(x => x !== cmd);
+  if (orderArr) eD.order = orderArr;
+  cmdSaveEdits();
+  return true;
+}
+// 新建一条自定义动作(原样发给 Vidu, 和"直发输入框"同一条通道)
+function cmdAddNew(title, text){
+  const t = (text || "").trim(); if (!t) return false;
+  const e = (CMD_EDITS[title] || (CMD_EDITS[title] = {}));
+  const ad = e.added || [];
+  if (!ad.some(x => (typeof x === "string" ? x : x.cmd) === t)) ad.push({ label: t, cmd: t });
+  e.added = ad;
+  e.removed = (e.removed || []).filter(x => x !== t);
+  // ⚠ 不能只往 order 里塞一条: order 优先渲染, 那样新项会跑到最前面 →
+  //   先把"当前可见顺序"整体固化, 再把新项追加到末尾(想往前拖就行)
+  const cur = cmdEffective(title).map(x => x.cmd).filter(x => x !== t);
+  e.order = [...cur, t];
+  cmdSaveEdits();
+  return true;
+}
+function cmdSyncEditUI(){
+  const b = $("btnCmdEdit"), t = $("cmdEditTip");
+  if (b){ b.classList.toggle("on", CMD_EDIT); b.textContent = CMD_EDIT ? "✏️ 编辑中" : "✏️ 编辑"; }
+  if (t) t.textContent = CMD_EDIT ? "拖拽排序 · 点 × 隐藏 · 点 chip 不会发送" : "关 = 点一下即发送";
+}
+function renderCmdGrid(){
+  const grid = $("cmdGrid");
+  if (!grid) return;
+  grid.replaceChildren();
+  grid.classList.toggle("editing", CMD_EDIT);
+  for (const [title] of CMD_GROUPS){
+    const eff = cmdEffective(title);
+    const addedSet = new Set((((CMD_EDITS[title] || {}).added) || []).map(x => typeof x === "string" ? x : x.cmd));
+    const g = document.createElement("div"); g.className = "cgroup";
+    const h = document.createElement("h4"); h.textContent = title; g.appendChild(h);
+    if (CMD_EDIT){
+      const rst = document.createElement("button"); rst.className = "ghost mini"; rst.type = "button";
+      rst.textContent = "↺ 恢复本组"; rst.title = "这一组回到出厂顺序/显示";
+      rst.addEventListener("click", ()=>{ cmdResetGroup(title); renderCmdGrid(); toast("已恢复：" + title); });
+      h.appendChild(rst);
+    }
+    // 🎲 「拟人化动作」组专属: 随机表演开关 + 间隔 + 权重偏好(池子=本组当前顺序, 顺序即优先级)
+    if (title.indexOf("🎭") === 0){
+      RND.pool = eff.map(x => x.cmd);
+      h.classList.add("rndh");
+      const rb = document.createElement("button");
+      rb.id = "rndBtn"; rb.type = "button";
+      const se = document.createElement("select"); se.id = "rndEvery"; se.title = "间隔";
+      for (const s of [6, 8, 10, 15, 20, 30, 45, 60]){
+        const o = document.createElement("option"); o.value = String(s); o.textContent = s + "秒"; se.appendChild(o);
+      }
+      const sb = document.createElement("select"); sb.id = "rndBias"; sb.title = "权重偏好";
+      for (const [v, t] of [["strong","越前越常出"], ["soft","中等偏好"], ["flat","均等"]]){
+        const o = document.createElement("option"); o.value = v; o.textContent = t; sb.appendChild(o);
+      }
+      h.appendChild(rb); h.appendChild(se); h.appendChild(sb);
+      rb.addEventListener("click", ()=> RND.on ? RND.stop() : RND.start());
+      se.addEventListener("change", ()=>{
+        RND.every = parseInt(se.value, 10) || 10; RND.save();
+        if (RND.on){ RND.stop(); RND.start(); }        // 立即按新间隔重排
+      });
+      sb.addEventListener("change", ()=>{ RND.bias = sb.value; RND.save(); RND.sync(); });
+      RND.sync();
+    }
+    const row = document.createElement("div"); row.className = "chips";
+    for (const it of eff){
+      const wrap = document.createElement("span"); wrap.className = "chipwrap" + (addedSet.has(it.cmd) ? " chipadded" : "");
+      const b = document.createElement("button");
+      b.className = "chip"; b.dataset.cmd = it.cmd;
+      b.textContent = cmdLabelFor(title, it.cmd, it.label);
+      b.title = (it.label && it.label !== it.cmd) ? (it.label + "（命令：" + it.cmd + "）") : it.cmd;
+      wrap.appendChild(b);
+      if (CMD_EDIT){
+        wrap.draggable = true; wrap.dataset.cmd = it.cmd; wrap.dataset.group = title;
+        const del = document.createElement("button");
+        del.className = "chipdel"; del.type = "button"; del.textContent = "×";
+        del.title = "从面板移除（可恢复）"; del.dataset.cmd = it.cmd; del.dataset.group = title;
+        wrap.appendChild(del);
+      }
+      row.appendChild(wrap);
+    }
+    if (CMD_EDIT){
+      const nb = document.createElement("button");
+      nb.className = "chip chipnew"; nb.type = "button"; nb.textContent = "＋ 新建";
+      nb.title = "在本组新增一条自定义动作（原样发给 Vidu）";
+      nb.dataset.new = "1"; nb.dataset.group = title;
+      row.appendChild(nb);
+    }
+    if (!eff.length) row.innerHTML = '<span style="color:var(--dim); font-size:12px">（本组已清空，点「↺ 恢复本组」可还原）</span>';
+    g.appendChild(row);
+    const rm = cmdRemovedList(title);
+    if (rm.length){
+      const r2 = document.createElement("div"); r2.className = "chips hiddenrow";
+      const tip = document.createElement("span"); tip.className = "hint";
+      tip.textContent = `已隐藏 ${rm.length} 条（点一下恢复）：`; r2.appendChild(tip);
+      for (const c of rm){
+        const b = document.createElement("button");
+        b.className = "chip ghostchip"; b.type = "button"; b.textContent = c;
+        b.title = "点一下恢复到面板"; b.dataset.restore = c; b.dataset.group = title;
+        r2.appendChild(b);
+      }
+      g.appendChild(r2);
+    }
+    grid.appendChild(g);
+  }
+  // 📚 全库动态组(2026-10-12 用户要求默认折叠): 点击标题展开, 首次展开才拉取(懒加载)
+  const lg = document.createElement("div"); lg.className = "cgroup";
+  const lh = document.createElement("h4"); lh.textContent = "📚 全库动作（自建库 · 点击展开）";
+  lh.style.cursor = "pointer"; lg.appendChild(lh);
+  const lc = document.createElement("div"); lc.className = "chips"; lc.id = "libChips";
+  lc.style.display = "none"; lg.appendChild(lc);
+  grid.appendChild(lg);
+  lh.addEventListener("click", ()=>{
+    const shown = lc.style.display !== "none";
+    lc.style.display = shown ? "none" : "";
+    lh.textContent = shown ? "📚 全库动作（自建库 · 点击展开）" : "📚 全库动作（自建库 · 点击收起）";
+    // 2026-10-16 改: 每次展开都重新拉库 —— 桥端新入库的动作不必刷新页面就能出现在这里
+    if (!shown) refreshLibChips();
+  });
+  // ⭐ 常用 Top10(近1天 · 弹幕命中/手点自动计数, 1天滚动) — Stage B 动态组
+  //   2026-10-21 用户要求: 从面板**最上面**挪到**最底部**(计数随时变, 摆在顶部会把常用组挤下去)
+  const tg = document.createElement("div"); tg.className = "cgroup";
+  const th = document.createElement("h4"); th.textContent = "⭐ 常用 Top10（近 1 天 · 自动排序）"; tg.appendChild(th);
+  const tc = document.createElement("div"); tc.className = "chips"; tc.id = "topChips"; tg.appendChild(tc);
+  grid.appendChild(tg);
+  try { window.__renderTop && window.__renderTop(); } catch (e) {}   // 重绘后回填 Top10
+}
+renderCmdGrid();
+cmdSyncEditUI();
+(function cmdEditWiring(){
+  const grid = $("cmdGrid");
+  if (!grid) return;
+  grid.addEventListener("click", async e=>{
+    const rs = e.target.closest("button[data-restore]");
+    if (rs){ cmdRestore(rs.dataset.group, rs.dataset.restore); renderCmdGrid(); return; }
+    const nw = e.target.closest("button[data-new]");
+    if (nw){
+      const t = prompt("新增一条动作（会原样发给 Vidu，例：原地转一圈）");
+      if (t && cmdAddNew(nw.dataset.group, t)){ renderCmdGrid(); toast("已新增：" + t.trim()); }
+      return;
+    }
+    const del = e.target.closest("button.chipdel");
+    if (del){ cmdRemove(del.dataset.group, del.dataset.cmd); renderCmdGrid(); toast("已隐藏：" + del.dataset.cmd); return; }
+    if (CMD_EDIT) return;                      // 编辑模式: 点 chip 不发送, 防直播误点
+    const b = e.target.closest("button.chip"); if (!b) return;
+    flashChip(b.dataset.cmd, await sendCmdText(b.dataset.cmd));
+  });
+  // 拖拽排序(编辑模式)
+  // 编辑模式双击 chip: 只改显示名(发送内容不变)
+  grid.addEventListener("dblclick", e=>{
+    if (!CMD_EDIT) return;
+    const w = e.target.closest(".chipwrap"); if (!w) return;
+    const b = w.querySelector("button.chip"); if (!b) return;
+    e.preventDefault();
+    const cur = b.textContent;
+    const t = prompt("给这个动作起个短名字（只改显示，发送内容还是 " + w.dataset.cmd + "）", cur);
+    if (t === null) return;
+    cmdSetLabel(w.dataset.group, w.dataset.cmd, (t || "").trim().slice(0, 6));
+    renderCmdGrid(); toast("已改名：" + (t || "").trim());
+  });
+  grid.addEventListener("dragstart", e=>{
+    const w = e.target.closest(".chipwrap"); if (!CMD_EDIT || !w) return;
+    CMD_DRAG = { cmd: w.dataset.cmd, group: w.dataset.group };
+    e.dataTransfer.setData("text/plain", w.dataset.cmd); e.dataTransfer.effectAllowed = "move";
+    w.classList.add("dragging");
+  });
+  grid.addEventListener("dragend", e=>{ const w = e.target.closest(".chipwrap"); if (w) w.classList.remove("dragging"); CMD_DRAG = null; });
+  grid.addEventListener("dragover", e=>{
+    if (!CMD_EDIT) return;
+    const w = e.target.closest(".chipwrap"); if (!w) return;
+    e.preventDefault(); w.classList.add("dropover");
+  });
+  grid.addEventListener("dragleave", e=>{ const w = e.target.closest(".chipwrap"); if (w) w.classList.remove("dropover"); });
+  grid.addEventListener("drop", e=>{
+    if (!CMD_EDIT) return;
+    const dst = e.target.closest(".chipwrap"); if (!dst) return;
+    e.preventDefault(); dst.classList.remove("dropover");
+    const group = dst.dataset.group;
+    const src = (CMD_DRAG && CMD_DRAG.cmd) || e.dataTransfer.getData("text/plain");
+    const srcGroup = (CMD_DRAG && CMD_DRAG.group) || group;
+    if (!src || !group) return;
+    const base = cmdEffective(group).map(x => x.cmd).filter(c => c !== src);
+    const idx = base.indexOf(dst.dataset.cmd);
+    if (idx < 0) return;
+    const rect = dst.getBoundingClientRect();
+    const before = (e.clientX - rect.left) < rect.width / 2;
+    const order = base.slice();
+    order.splice(idx + (before ? 0 : 1), 0, src);
+    if (srcGroup !== group){                                  // 跨组: 归到目标组(源组里隐藏)
+      if (cmdMoveTo(srcGroup, group, src, order)){ renderCmdGrid(); toast(`已移到「${group}」`); }
+      return;
+    }
+    cmdSetOrder(group, order); renderCmdGrid(); toast("顺序已保存");
+  });
+})();
+$("btnCmdEdit").addEventListener("click", ()=>{ CMD_EDIT = !CMD_EDIT; cmdSyncEditUI(); renderCmdGrid(); });
+$("btnCmdExport") && $("btnCmdExport").addEventListener("click", async ()=>{
+  const txt = JSON.stringify(CMD_EDITS, null, 1);
+  try { await navigator.clipboard.writeText(txt); toast("已复制到剪贴板（" + txt.length + " 字符）"); }
+  catch (e) { prompt("复制下面这段：", txt); }
+});
+$("btnCmdImport") && $("btnCmdImport").addEventListener("click", ()=>{
+  const t = prompt("粘贴导出的配置 JSON：");
+  if (!t) return;
+  try {
+    const obj = JSON.parse(t);
+    for (const k of Object.keys(CMD_EDITS)) delete CMD_EDITS[k];
+    Object.assign(CMD_EDITS, obj || {});
+    cmdSaveEdits(); renderCmdGrid(); toast("已导入");
+  } catch (e) { toast("导入失败: " + (e.message || e), true); }
+});
+$("btnCmdResetAll").addEventListener("click", ()=>{
+  for (const k of Object.keys(CMD_EDITS)) delete CMD_EDITS[k];
+  cmdSaveEdits(); renderCmdGrid(); toast("已全部恢复成出厂顺序");
+});
+async function refreshLibChips(){
+  const box = $("libChips"); if (!box) return;
+  box.textContent = "加载中…";
+  try{
+    const d = await api("/api/actions/libs");
+    const lib = (d.items||[]).sort((a,b)=>(b.action_count||0)-(a.action_count||0))[0];
+    if (!lib){ box.textContent = "没有自建库"; return; }
+    const acts = await api(`/api/actions/libs/${lib.id}/actions`);
+    box.replaceChildren();
+    for (const it of (acts.items||[])){
+      const b = document.createElement("button");
+      b.className = "chip"; b.textContent = it.name; b.dataset.cmd = it.name;
+      box.appendChild(b);
+    }
+  }catch(e){ box.textContent = "加载失败: " + (e.message||e); }
+}
+$("btnCmds").addEventListener("click", ()=>{
+  const p = $("cmds"); p.classList.toggle("open");
+  if (p.classList.contains("open")){ $("songs").classList.remove("open"); $("vpanel").classList.remove("open"); }
+  // 全库组已改懒加载: 首次点击「📚 全库动作」标题才拉取
+});
+$("btnCmdsX").addEventListener("click", ()=>$("cmds").classList.remove("open"));
+// 便于自测/截图: ?cmds=1 直接开面板, &edit=1 顺带进编辑模式(2026-10-20)
+try{
+  const _q = new URLSearchParams(location.search);
+  // ?seed=1: 预览用 —— 把几个英文 id 塞进拟人化组, 验证标签是否变成短中文
+  if (_q.get("seed") === "1"){
+    const g = "🎭 拟人化动作";
+    for (const id of ["fingerHeart","okSign","palmFistGreeting","pawPose","rabbitPose",
+                      "threeFingerSalute","doubleV","rockOn","hand-over-heart","vulcan salute"]){
+      cmdAddNew(g, id);
+    }
+    renderCmdGrid();
+  }
+  if (_q.get("cmds") === "1"){
+    $("cmds").classList.add("open");
+    if (_q.get("edit") === "1" && !CMD_EDIT){ CMD_EDIT = true; cmdSyncEditUI(); renderCmdGrid(); }
+  }
+}catch(e){}
+
+/* ───────── 🖼 参考图面板(2026-10-17 接入 type=11 prompt_operation) ─────────
+   换装 / 拿起指定商品 / 换背景。服务端**成功没有回执**(数秒内画面自己变), 失败才回 type=14;
+   实测铁律: ①换装不传 kind ②图里不能有人脸 ③切换前先还原并等 16s ④本地 127.0.0.1 的图服务端取不到。 */
+const REF = { name:"", dataUrl:"", uri:"" };
+async function refSync(){
+  if (!state.liveId){ $("refState").textContent = "当前：未连线"; return; }
+  try{
+    const st = await api("/api/prompt");
+    const m = st.mounted || [];
+    const k = st.last && st.last.images && st.last.images[0] ? (st.last.images[0].kind || "") : "";
+    const ackTxt = st.ack ? (st.ack.success ? " · 回执 ✅ 已生效" : " · 回执 ❌ 失败") : "";
+    $("refState").textContent = m.length
+      ? `当前：已挂 ${m.join(" / ")}${k ? "（" + k + "）" : "（换装/自动识别）"}${ackTxt}`
+      : `当前：无${ackTxt}`;
+  }catch(e){ /* 桥未起/旧版本: 静默 */ }
+}
+function refPickShow(thumb, hint){
+  const box = $("refThumb"); box.replaceChildren();
+  if (thumb){ const img = document.createElement("img"); img.src = thumb; box.appendChild(img); }
+  const d = document.createElement("div"); d.className = "hint"; d.textContent = hint; box.appendChild(d);
+}
+function refUriNow(){ return ($("refUri").value || "").trim() || REF.uri || REF.dataUrl; }
+function refDefaultText(kind){
+  if (kind === "object") return "让数字人手持这件物品";
+  if (kind === "background") return "把背景换成参考图里的场景";
+  return "给数字人换上这件衣服";
+}
+async function refApply(kind, label){
+  if (!state.liveId){ toast("先连线再用参考图", true); return; }
+  const uri = refUriNow();
+  if (!uri){ toast("先选一张参考图（或粘贴短链）", true); return; }
+  const userText = ($("refText").value || "").trim() || refDefaultText(kind);
+  try{
+    // 铁律③: 已有参考图挂着 → 先 remove 再等 16 秒, 否则新的 garment/background 常静默不生效
+    const st = await api("/api/prompt");
+    if (((st.mounted || []).length) > 0){
+      $("refState").textContent = "当前：还原旧参考图…";
+      await api("/api/prompt", {method:"POST", body:JSON.stringify({op_type:"remove", images:[]})});
+      toast("已还原旧参考图 · 等 16 秒再挂新图…");
+      for (let s = 16; s > 0; s--){
+        $("refState").textContent = `当前：等待 ${s}s 后切换…`;
+        await new Promise(r => setTimeout(r, 1000));
+      }
+    }
+    const item = { image_uri: uri, image_id: "ref-" + Date.now().toString(36), user_text: userText };
+    if (kind) item.kind = kind;                      // 换装故意不传 kind(实测更稳)
+    const t0 = Date.now() / 1000;
+    $("refState").textContent = "当前：已发送「" + label + "」· 等回执…";
+    await api("/api/prompt", {method:"POST", body:JSON.stringify({op_type:"switch", images:[item]})});
+    toast(`已发送「${label}」· 等 Vidu 回执…`);
+    // 服务端会回 type=12 ack(2026-10-17 实锤) → 轮询确认到底成没成, 不用靠猜画面
+    for (const ms of [2500, 3000, 4000, 5000]){
+      await new Promise(r => setTimeout(r, ms));
+      let st2 = null;
+      try{ st2 = await api("/api/prompt"); }catch(e){ st2 = null; }
+      const a = st2 && st2.ack;
+      if (a && a.at >= t0 - 1){
+        if (a.success) toast(`✅ 「${label}」已生效（服务端回执）`);
+        else toast(`❌ Vidu 拒绝了这个参考图（回执 success=false）：常见原因是地址取不到 / 没先还原旧图 / 图里有人脸`, true);
+        refSync();
+        return;
+      }
+    }
+    refSync();
+  }catch(e){
+    toast("参考图失败: " + (e.message||e), true);
+    $("refState").textContent = "当前：失败（" + (e.message||e) + "）";
+  }
+}
+$("btnRefs").addEventListener("click", ()=>{
+  const p = $("refs"), willOpen = !p.classList.contains("open");
+  p.classList.toggle("open", willOpen);
+  if (willOpen){
+    $("cmds").classList.remove("open"); $("songs").classList.remove("open"); $("vpanel").classList.remove("open");
+    refSync();
+  }
+});
+$("btnRefsX").addEventListener("click", ()=> $("refs").classList.remove("open"));
+$("btnRefPick").addEventListener("click", ()=> $("refFile").click());
+$("refFile").addEventListener("change", e=>{
+  const f = (e.target.files || [])[0]; if (!f) return;
+  if (!/^image\//.test(f.type || "")){ toast("只支持图片", true); return; }
+  if (f.size > 12 * 1024 * 1024){ toast("图片太大（>12MB）", true); return; }
+  const rd = new FileReader();
+  rd.onload = ()=>{
+    REF.name = f.name; REF.dataUrl = String(rd.result || ""); REF.uri = "";
+    $("refName").textContent = f.name;
+    $("refUri").value = "";
+    refPickShow(REF.dataUrl, `已选：${f.name}（${(f.size/1024).toFixed(0)} KB）→ 点下面任一按钮应用`);
+  };
+  rd.readAsDataURL(f);
+});
+$("refUri").addEventListener("input", ()=>{
+  const box = $("refUri");
+  // Explorer「复制路径」会带引号("C:\...\扇子.jpg") → 自动剥掉; 本机路径由桥端直接读盘上传成短链
+  const v = (box.value || "").trim().replace(/^["']+|["']+$/g, "").trim();
+  if (v !== box.value.trim()) box.value = v;
+  if (v){
+    REF.uri = v; REF.dataUrl = ""; REF.name = "";
+    const isPath = /^[A-Za-z]:[\\/]/.test(v) || v.startsWith("\\\\");
+    $("refName").textContent = isPath ? "本机路径（会自动上传成短链）" : "用链接";
+  }
+});
+$("btnRefObj").addEventListener("click", ()=> refApply("object", "拿起商品"));
+$("btnRefDress").addEventListener("click", ()=> refApply("", "换上衣服"));
+$("btnRefBg").addEventListener("click", ()=> refApply("background", "换背景"));
+$("btnRefClear").addEventListener("click", async ()=>{
+  try{ await api("/api/prompt", {method:"POST", body:JSON.stringify({op_type:"remove", images:[]})});
+       toast("已还原参考图"); refSync(); }
+  catch(e){ toast("还原失败: " + (e.message||e), true); }
+});
+
+/* ───────── Stage B: 自动匹配开关 / ⭐Top10 / 确认条(3s 轮询 /api/dmcmd/state) ─────────
+   off=纯手点(用户拍板) · confirm=T0直发+T2结果进确认条 · auto=T2结果也直发。
+   计数在桥端 /api/cmd 与路由触发处统一进行, 1 天滚动排序。 */
+let autoState = { enabled:false, mode:"confirm", top:[], pending:[] };
+async function loadAutoState(){
+  try{
+    autoState = await api("/api/dmcmd/state");
+    const chk = $("autoMatchChk"), sel = $("autoModeSel");
+    if (document.activeElement !== chk) chk.checked = !!autoState.enabled;
+    sel.style.display = autoState.enabled ? "" : "none";
+    if (document.activeElement !== sel) sel.value = autoState.mode === "auto" ? "auto" : "confirm";
+    renderTop();
+    renderConfirmBar();
+  }catch(e){ /* 桥未起/旧版本: 静默 */ }
+}
+function renderTop(){
+  const box = $("topChips"); if (!box) return;
+  box.replaceChildren();
+  const top = autoState.top || [];
+  if (!top.length){
+    const s = document.createElement("span"); s.style.cssText = "color:var(--dim); font-size:12px";
+    s.textContent = "今天还没有触发记录 —— 弹幕命中或手点会自动计数";
+    box.appendChild(s); return;
+  }
+  for (const it of top){
+    const b = document.createElement("button");
+    b.className = "chip"; b.dataset.cmd = it.text;
+    b.textContent = it.text + " ";
+    const n = document.createElement("span"); n.style.cssText = "color:#c4b5fd; font-size:11px";
+    n.textContent = "×" + it.count; b.appendChild(n);
+    box.appendChild(b);
+  }
+}
+  window.__renderTop = renderTop;   // 面板重绘后要能立刻回填 Top10
+function renderConfirmBar(){
+  const bar = $("confirmBar"); if (!bar) return;
+  const list = autoState.pending || [];
+  if (!list.length){ bar.style.display = "none"; bar.replaceChildren(); return; }
+  bar.style.display = "flex"; bar.replaceChildren();
+  for (const p of list){
+    const d = document.createElement("div"); d.className = "citem";
+    const b1 = document.createElement("b"); b1.textContent = p.nick;
+    const line = document.createElement("div");
+    line.appendChild(b1); line.appendChild(document.createTextNode("：" + p.content));
+    if ((p.count || 1) > 1){
+      const bn = document.createElement("span");
+      bn.style.cssText = "color:#c4b5fd; font-size:11px; margin-left:6px";
+      bn.textContent = "×" + p.count + " 同求";
+      line.appendChild(bn);
+    }
+    d.appendChild(line);
+    const row = document.createElement("div"); row.className = "crow";
+    const send = document.createElement("button"); send.className = "ok";
+    send.textContent = "🎬 直发「" + p.text + "」";
+    const no = document.createElement("button"); no.className = "no"; no.textContent = "忽略";
+    const src = document.createElement("span"); src.className = "csrc";
+    src.textContent = p.source === "T2" ? "编译器建议" : (p.source || "");
+    send.addEventListener("click", async ()=>{
+      try{ await api("/api/dmcmd/confirm", {method:"POST", body:JSON.stringify({id:p.id})}); }catch(e){ toast("直发失败: "+(e.message||e), true); }
+      loadAutoState();
+    });
+    no.addEventListener("click", async ()=>{
+      try{ await api("/api/dmcmd/dismiss", {method:"POST", body:JSON.stringify({id:p.id})}); }catch(e){}
+      loadAutoState();
+    });
+    row.appendChild(send); row.appendChild(no); row.appendChild(src);
+    d.appendChild(row);
+    bar.appendChild(d);
+  }
+}
+$("autoMatchChk").addEventListener("change", async e=>{
+  try{ await api("/api/dmcmd/toggle", {method:"POST", body:JSON.stringify({enabled:e.target.checked})}); }
+  catch(err){ toast("开关失败: "+(err.message||err), true); }
+  loadAutoState();
+});
+$("autoModeSel").addEventListener("change", async e=>{
+  try{ await api("/api/dmcmd/toggle", {method:"POST", body:JSON.stringify({mode:e.target.value})}); }
+  catch(err){ toast("切换失败: "+(err.message||err), true); }
+  loadAutoState();
+});
+setInterval(loadAutoState, 3000);
+loadAutoState();
+loadAvatarStill();          // 未连线底图: 上一次连线数字人的原始图
+
+/* ───────── 音色热切面板(2026-10-11): 点顶栏音色 pill → 右滑面板 → 点击即热切 ─────────
+   后端: GET /api/tts/voices(列表) + POST /api/tts/voice(热切+持久化) + POST /api/tts/preview(试听 WAV)。
+   引擎每次合成都实时读 tts.voice → 直播中切换, 下一句话就换嗓子, Vidu 端口型照跟不断线。 */
+let vpAudio = null;
+async function loadVoices(){
+  const box = $("voiceList"); if (!box) return;
+  box.textContent = "加载中…";
+  try{
+    const d = await api("/api/tts/voices");
+    box.replaceChildren();
+    if (!(d.voices||[]).length){ box.textContent = "没扫到音色（检查 voices 目录配置）"; return; }
+    for (const v of (d.voices||[])){
+      const row = document.createElement("div");
+      row.className = "vrow" + (v.name === d.current ? " on" : "");
+      const nm = document.createElement("span"); nm.className = "vname";
+      nm.textContent = (v.name === d.current ? "✓ " : "") + v.name;
+      const lb = document.createElement("span"); lb.className = "vlabel";
+      lb.textContent = (v.label && v.label !== v.name) ? v.label : (v.kind || "");
+      const pv = document.createElement("button"); pv.className = "vprev"; pv.textContent = "▶ 试听";
+      pv.addEventListener("click", async e=>{
+        e.stopPropagation();
+        if (pv.disabled) return;
+        pv.disabled = true; pv.textContent = "合成中…";
+        try{
+          const r = await fetch("/api/tts/preview", {method:"POST", headers:{"Content-Type":"application/json"},
+            body: JSON.stringify({voice: v.name, text: "你好呀，我是小雅，切换成这个声音说话，就是这样的感觉。"})});
+          if (!r.ok) throw new Error(r.status + " " + r.statusText);
+          const blob = await r.blob();
+          if (vpAudio) vpAudio.pause();
+          vpAudio = new Audio(URL.createObjectURL(blob));
+          await vpAudio.play();
+        }catch(err){ toast("试听失败: " + (err.message||err), true); }
+        pv.disabled = false; pv.textContent = "▶ 试听";
+      });
+      row.append(nm, lb, pv);
+      row.addEventListener("click", async ()=>{
+        if (row.classList.contains("on")){ toast("已经是当前音色啦"); return; }
+        try{
+          await api("/api/tts/voice", {method:"POST", body: JSON.stringify({name: v.name})});
+          toast("音色已切换: " + v.name + "（下句话生效）");
+          loadVoices();
+        }catch(err){ toast("切换失败: " + (err.message||err), true); }
+      });
+      box.appendChild(row);
+    }
+  }catch(e){ box.textContent = "加载失败: " + (e.message||e); }
+}
+$("voicePill").addEventListener("click", ()=>{
+  const p = $("vpanel"); p.classList.toggle("open");
+  if (p.classList.contains("open")){ $("songs").classList.remove("open"); $("cmds").classList.remove("open"); loadVoices(); }
+});
+$("btnVoiceX").addEventListener("click", ()=>$("vpanel").classList.remove("open"));
+$("btnVoiceRefresh").addEventListener("click", loadVoices);
+
+$("btnItt").addEventListener("click", async ()=>{
+  try{ await api("/api/interrupt", {method:"POST"}); toast("已打断"); }
+  catch(e){ toast("打断失败: " + (e.message||e), true); }
+});
+
+$("btnStop").addEventListener("click", async ()=>{
+  $("btnStop").disabled = true;
+  try{ await api("/api/live/stop", {method:"POST"}); }
+  catch(e){ toast("挂断失败: " + (e.message||e), true); }
+  finally{ $("btnStop").disabled = false; }
+});
+
+/* 停止演唱(歌单面板): 打断当前播放, 歌词面板/点播高亮随状态轮询自动复位 */
+$("btnStopSong").addEventListener("click", async ()=>{
+  $("btnStopSong").disabled = true;
+  try{ await api("/api/interrupt", {method:"POST"}); toast("已停止演唱"); }
+  catch(e){ toast("停止失败: " + (e.message||e), true); }
+  finally{ $("btnStopSong").disabled = false; }
+});
+
+/* ───────── 点播歌单(按钮网格) ───────── */
+let songCache = [];
+let songPlaying = null;
+let songFold = {};            // 专辑分组折叠状态: 分组名 → true 表示收起(点标题切换)
+
+async function refreshFiles(){
+  try{
+    const d = await api("/api/tts/files");
+    songCache = d.files;
+    $("songLocalPath").title = "点播目录: " + d.dir;
+    renderSongs();
+  }catch(e){}
+}
+function songLibLabel(lib){
+  if (!lib || lib === "main") return "📁 本地点播目录";
+  return "💿 " + lib;
+}
+function renderSongs(){
+  const grid = $("songGrid");
+  const kw = $("songFilter").value.trim().toLowerCase();
+  const list = kw ? songCache.filter(f => f.name.toLowerCase().includes(kw)) : songCache;
+  $("songCount").textContent = songCache.length ? `(${songCache.length} 首)` : "";
+  grid.innerHTML = "";
+  if (!list.length){
+    grid.innerHTML = `<div class="empty">${songCache.length ? "没有匹配的歌"
+      : "歌单还是空的 —— 「📂 选歌曲文件」/「🗂 选整个文件夹」/「📥 导入本机文件夹」任选其一"}</div>`;
+    return;
+  }
+  let curLib = null;
+  for (const f of list){
+    if (f.lib !== curLib){
+      curLib = f.lib;
+      const total = songCache.filter(x => x.lib === curLib).length;
+      const folded = !!songFold[curLib] && !kw;      // 搜索时强制展开
+      const h = document.createElement("div");
+      h.className = "songlib";
+      const s1 = document.createElement("span");
+      s1.textContent = (folded ? "▸ " : "▾ ") + songLibLabel(curLib);
+      const s2 = document.createElement("span");
+      s2.className = "n"; s2.textContent = total + " 首";
+      const s3 = document.createElement("span");
+      s3.className = "ar"; s3.textContent = folded ? "已收起 · 点击展开" : "";
+      h.appendChild(s1); h.appendChild(s2); h.appendChild(s3);
+      h.addEventListener("click", () => { songFold[curLib] = !songFold[curLib]; renderSongs(); });
+      grid.appendChild(h);
+    }
+    if (songFold[f.lib] && !kw) continue;            // 收起的分组只留标题
+    const el = document.createElement("div");
+    el.className = "song" + (songPlaying === f.name ? " playing" : "");
+    el.title = `${f.name} · ${(f.size/1048576).toFixed(1)}MB\n点击=播放 · ✎=带字幕播放 · ×=删除`;
+    const t = document.createElement("div");
+    t.className = "t"; t.textContent = "♪ " + f.name.replace(/\.[^.]+$/, "");
+    const m = document.createElement("small");
+    m.textContent = (f.size/1048576).toFixed(1) + "MB" + (songPlaying === f.name ? " · ▶ 播放中" : "");
+    const del = document.createElement("button");
+    del.className = "del"; del.textContent = "×"; del.title = "从歌单删除";
+    del.addEventListener("click", ev => { ev.stopPropagation(); delSong(f.name); });
+    const scr = document.createElement("button");
+    scr.className = "scr"; scr.textContent = "✎"; scr.title = "带字幕文本播放";
+    scr.addEventListener("click", ev => { ev.stopPropagation(); playSong(f.name, true); });
+    el.appendChild(t); el.appendChild(m); el.appendChild(scr);
+    if (f.lib === "main") el.appendChild(del);       // 挂载歌单(lib)只读: 不给 × , 免得误点报错
+    el.addEventListener("click", () => playSong(f.name, false));
+    grid.appendChild(el);
+  }
+}
+async function playSong(name, askScript){
+  if (!state.liveId){ toast("先连线再点播", true); return; }
+  let script = "";
+  if (askScript) script = prompt("同步字幕文本(可空; 歌名同名 .txt 会自动带上):", "") || "";
+  capSuppress(true);            // 点歌瞬间就藏画面字幕层(不用等下一次轮询), 免得先露一眼歌词
+  try{
+    const r = await api("/api/say/file", {method:"POST", body:JSON.stringify({file_name:name, script})});
+    toast("▶ " + name + " (" + r.seconds + "s)");
+  }catch(e){
+    capSuppress(false);         // 点播失败 → 立刻恢复
+    toast("点播失败: " + (e.message||e), true);
+  }
+}
+async function delSong(name){
+  if (!confirm("从歌单删除 " + name + " ?")) return;
+  try{
+    await api("/api/tts/delete", {method:"POST", body:JSON.stringify({file_name:name})});
+    toast("已删除 " + name); refreshFiles();
+  }catch(e){ toast("删除失败: " + (e.message||e), true); }
+}
+$("btnSongs").addEventListener("click", ()=>{
+  const p = $("songs"); p.classList.toggle("open");
+  if (p.classList.contains("open")){
+    $("vpanel").classList.remove("open"); $("cmds").classList.remove("open");
+    refreshFiles();
+    const sp = localStorage.getItem("s2s_songPath");
+    if (sp) $("songLocalPath").value = sp;
+  }
+});
+$("btnSongsX").addEventListener("click", ()=>$("songs").classList.remove("open"));
+$("btnSongRefresh").addEventListener("click", refreshFiles);
+$("songFilter").addEventListener("input", renderSongs);
+$("btnPickFiles").addEventListener("click", ()=>$("songFiles").click());
+$("btnPickDir").addEventListener("click", ()=>$("songDir").click());
+async function uploadSongs(fileList){
+  const arr = [...fileList].filter(f => f.size > 0);
+  if (!arr.length) return;
+  toast("上传中 " + arr.length + " 个文件…");
+  const fd = new FormData();
+  for (const f of arr) fd.append("files", f, f.name);
+  try{
+    const r = await fetch("/api/tts/upload", {method:"POST", body:fd});
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.detail || r.status);
+    toast(`已上传 ${j.count}/${arr.length} 个`);
+    refreshFiles();
+  }catch(e){ toast("上传失败: " + (e.message||e), true); }
+}
+$("songFiles").addEventListener("change", e => { uploadSongs(e.target.files); e.target.value = ""; });
+$("songDir").addEventListener("change", e => { uploadSongs(e.target.files); e.target.value = ""; });
+$("btnImportFolder").addEventListener("click", async ()=>{
+  const p = $("songLocalPath").value.trim();
+  if (!p){ toast("先填本机歌曲文件夹路径", true); return; }
+  localStorage.setItem("s2s_songPath", p);
+  const btn = $("btnImportFolder");
+  btn.disabled = true; btn.textContent = "导入中…";
+  try{
+    const r = await api("/api/tts/import-folder", {method:"POST", body:JSON.stringify({path:p})});
+    toast(`导入完成: 新增 ${r.imported} · 重复跳过 ${r.skipped}` + (r.failed ? ` · 失败 ${r.failed}` : ""));
+    refreshFiles();
+  }catch(e){ toast("导入失败: " + (e.message||e), true); }
+  finally{ btn.disabled = false; btn.textContent = "📥 导入本机文件夹"; }
+});
+
+/* ───────── 音色 ───────── */
+async function refreshVoices(){
+  try{
+    const d = await api("/api/tts/voices");
+    const sel = $("s_voice");
+    sel.innerHTML = "";
+    for (const v of d.voices){
+      const o = document.createElement("option");
+      o.value = v.name;
+      o.textContent = v.label + (v.kind === "saved" ? "（官方已保存）" : v.kind === "design" ? "（设计）" : "（克隆）");
+      if (v.name === d.current) o.selected = true;
+      sel.appendChild(o);
+    }
+  }catch(e){ toast("音色列表失败: " + (e.message||e), true); }
+}
+$("btnVoiceRefresh").addEventListener("click", refreshVoices);
+$("s_voice").addEventListener("change", async ()=>{
+  try{
+    await api("/api/tts/voice", {method:"POST", body:JSON.stringify({name:$("s_voice").value})});
+    toast("音色已切 → " + $("s_voice").value + "（下次开口生效）");
+  }catch(e){ toast("切换失败: " + (e.message||e), true); }
+});
+$("btnPreview").addEventListener("click", async ()=>{
+  const btn = $("btnPreview");
+  btn.disabled = true; btn.textContent = "合成中…";
+  try{
+    const r = await fetch("/api/tts/preview", {method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({text:$("s_prevtxt").value, voice:$("s_voice").value})});
+    if (!r.ok){ const j = await r.json().catch(()=>({})); throw new Error(j.detail || r.status); }
+    const blob = await r.blob();
+    new Audio(URL.createObjectURL(blob)).play();
+  }catch(e){ toast("试听失败: " + (e.message||e), true); }
+  finally{ btn.disabled = false; btn.textContent = "▶ 试听"; }
+});
+
+/* ───────── 动作库 ───────── */
+async function refreshLibs(){
+  try{
+    const d = await api("/api/actions/libs");
+    const sel = $("s_act_lib");
+    const cur = sel.value;
+    sel.innerHTML = '<option value="0">0 = 平台默认库</option>';
+    for (const it of (d.items || [])){
+      const o = document.createElement("option");
+      o.value = String(it.id);
+      o.textContent = `${it.name}（${it.action_count ?? "?"} 条）`;
+      if (String(it.id) === cur) o.selected = true;
+      sel.appendChild(o);
+    }
+  }catch(e){ /* 未填 key 或网络问题静默 */ }
+}
+$("btnActRefresh").addEventListener("click", refreshLibs);
+$("btnActNew").addEventListener("click", async ()=>{
+  const name = $("s_act_libname").value.trim();
+  if (!name) return toast("先填库名", true);
+  try{ await api("/api/actions/libs", {method:"POST", body:JSON.stringify({name})});
+    toast("库已创建"); $("s_act_libname").value = ""; refreshLibs(); }
+  catch(e){ toast("创建失败: " + (e.message||e), true); }
+});
+$("btnActAdd").addEventListener("click", async ()=>{
+  const lib = $("s_act_lib").value;
+  const name = $("s_act_aname").value.trim();
+  const desc = $("s_act_adesc").value.trim();
+  if (lib === "0") return toast("先选一个自建库（平台默认库不可添加）", true);
+  if (!name || desc.length < 5) return toast("动作名必填；描述至少 5 字", true);
+  try{ await api(`/api/actions/libs/${lib}/actions`, {method:"POST", body:JSON.stringify({name, description:desc})});
+    toast("动作已添加（服务端改写需数秒）");
+    $("s_act_aname").value = ""; $("s_act_adesc").value = ""; }
+  catch(e){ toast("添加失败: " + (e.message||e), true); }
+});
+
+/* ───────── 设置 ───────── */
+async function loadSettings(){
+  try{
+    const s = await api("/api/settings");
+    const source = s.danmaku_source || {};
+    $("s_dan_source_enabled").checked = source.enabled === true;
+    $("s_dan_source_room").value = source.room_id || "";
+    $("s_dan_source_room").dataset.room = source.room_id || "";
+    $("s_dan_source_room").dataset.enabled = String(source.enabled === true);
+    $("s_dan_source_room").dataset.url = source.url || "ws://127.0.0.1:8757/ws?types=chat,gift,follow,roomStatus";
+    $("s_vidu_key").placeholder = (s.vidu||{}).api_key_set ? "已配置（要改才填）" : "未配置，填写后保存";
+    $("s_model").value = s.model || "vidu-s2";
+    $("s_rtcmode").value = (s.rtc||{}).mode || "managed";
+    $("s_mprovider").value = (s.rtc||{}).managed_provider || "artc";
+    $("s_cprovider").value = (s.rtc||{}).customer_provider || "artc";
+    $("s_avatar_id").value = (s.avatar||{}).avatar_id || "";
+    $("s_greeting").value = (s.session||{}).greeting || "";
+    $("s_idle").value = (s.session||{}).idle_timeout_seconds ?? 300;
+    $("s_maxdur").value = (s.session||{}).max_duration_seconds ?? 1800;
+    $("s_chunk").value = (s.tts||{}).chunk_ms ?? 100;
+    $("s_persent").checked = (s.session||{}).send_output_per_sentence !== false;
+    $("s_llm_base").value = (s.llm||{}).base_url || "";
+    $("s_llm_model").value = (s.llm||{}).model || "";
+    $("s_llm_keyfile").value = (s.llm||{}).key_file || "";
+    $("s_llm_temp").value = (s.llm||{}).temperature ?? 0.7;
+    $("s_llm_maxtok").value = (s.llm||{}).max_tokens ?? 300;
+    $("s_llm_sys").value = (s.llm||{}).system_prompt || "";
+    $("s_dan_interval").value = Math.round(((s.danmaku||{}).read_interval_ms ?? 20000) / 1000);
+    $("s_dan_vip_interval").value = Math.round(((s.danmaku||{}).vip_min_interval_ms ?? 5000) / 1000);
+    { const st = s.stage || {};
+      capCfg.on = st.cap_overlay !== false;
+      capCfg.offsetPx = Number(st.cap_offset_px ?? 200);
+      capCfg.lines = Math.max(1, Math.min(4, Number(st.cap_lines ?? 3)));
+      capCfg.fontPx = Math.max(10, Number(st.cap_font_px ?? 17));
+      capCfg.fadeSec = Math.max(3, Number(st.cap_fade_sec ?? 20));
+      capCfg.showSys = st.cap_show_sys !== false;
+      capCfg.maskIds = st.mask_ids !== false;
+      capCfg.shadow = SHADOW_STEPS[st.shadow] ? st.shadow : "light";
+      $("s_shadow").value = capCfg.shadow;
+      $("s_cap_on").checked = capCfg.on;
+      $("s_cap_off").value = capCfg.offsetPx;
+      $("s_cap_lines").value = capCfg.lines;
+      $("s_cap_font").value = capCfg.fontPx;
+      $("s_cap_fade").value = capCfg.fadeSec;
+      $("s_cap_sys").checked = capCfg.showSys;
+      $("s_cap_mask").checked = capCfg.maskIds;
+      applyCapCfg();
+    }
+    // 动作库(2026-10-11: 勾选框之前是装饰性的——既不读也不存配置, 永远显示未勾选)
+    { const act = s.action || {};
+      $("s_act_en").checked = act.enabled === true;
+      if (act.library_id != null && act.library_id !== "") $("s_act_lib").value = String(act.library_id);
+    }
+    $("s_artc_id").value = (s.rtc||{}).artc?.app_id || "";
+    $("s_artc_key").placeholder = (s.rtc||{}).artc?.app_key_set ? "已配置（要改才填）" : "未配置";
+    $("s_artc_shape").value = (s.rtc||{}).artc?.token_shape || "authinfo";
+    $("s_trtc_id").value = (s.rtc||{}).trtc?.sdk_app_id || "";
+    $("s_trtc_key").placeholder = (s.rtc||{}).trtc?.secret_key_set ? "已配置（要改才填）" : "未配置";
+  }catch(e){ toast("读取设置失败: " + (e.message||e), true); }
+}
+$("btnSave").addEventListener("click", async ()=>{
+  const patch = {
+    model: $("s_model").value,
+    avatar: {avatar_id: $("s_avatar_id").value.trim() || null},
+    action: {enabled: $("s_act_en").checked,
+             library_id: $("s_act_lib").value || "0"},
+    danmaku: {read_interval_ms: Math.max(3, Math.round(+$("s_dan_interval").value || 20)) * 1000,
+              vip_min_interval_ms: Math.max(1, Math.round(+$("s_dan_vip_interval").value || 5)) * 1000},
+    stage: {cap_overlay: $("s_cap_on").checked,
+            cap_offset_px: Math.max(0, Math.round(+$("s_cap_off").value || 200)),
+            cap_lines: Math.max(1, Math.min(4, Math.round(+$("s_cap_lines").value || 3))),
+            cap_font_px: Math.max(10, Math.round(+$("s_cap_font").value || 17)),
+            cap_fade_sec: Math.max(3, Math.round(+$("s_cap_fade").value || 20)),
+            cap_show_sys: $("s_cap_sys").checked,
+            mask_ids: $("s_cap_mask").checked,
+            shadow: $("s_shadow").value},
+    rtc: {mode: $("s_rtcmode").value, managed_provider: $("s_mprovider").value,
+          customer_provider: $("s_cprovider").value,
+          artc: {app_id: $("s_artc_id").value.trim(), token_shape: $("s_artc_shape").value},
+          trtc: {sdk_app_id: $("s_trtc_id").value.trim()}},
+    llm: {base_url: $("s_llm_base").value.trim(), model: $("s_llm_model").value.trim(),
+          key_file: $("s_llm_keyfile").value.trim(),
+          temperature: Number($("s_llm_temp").value)||0.7,
+          max_tokens: Number($("s_llm_maxtok").value)||300,
+          system_prompt: $("s_llm_sys").value},
+    tts: {chunk_ms: Number($("s_chunk").value)||100},
+    session: {greeting: $("s_greeting").value, idle_timeout_seconds: Number($("s_idle").value)||300,
+              max_duration_seconds: Number($("s_maxdur").value)||1800,
+              send_output_per_sentence: $("s_persent").checked},
+  };
+  if ($("s_artc_key").value.trim()) patch.rtc.artc.app_key = $("s_artc_key").value.trim();
+  if ($("s_trtc_key").value.trim()) patch.rtc.trtc.secret_key = $("s_trtc_key").value.trim();
+  if ($("s_vidu_key").value.trim()) patch.vidu = {api_key: $("s_vidu_key").value.trim()};
+  const sourceField = $("s_dan_source_room");
+  const sourceRoom = sourceField.value.trim();
+  const sourceEnabled = $("s_dan_source_enabled").checked;
+  if (sourceEnabled && !/^\d+$/.test(sourceRoom)){
+    toast("请填写 DyHub 中正在采集的数字直播间号。", true); return;
+  }
+  if (sourceRoom !== sourceField.dataset.room || String(sourceEnabled) !== sourceField.dataset.enabled){
+    try {
+      const sourceUrl = new URL(sourceField.dataset.url);
+      sourceUrl.searchParams.set("roomId", sourceRoom);
+      patch.danmaku_source = {enabled: sourceEnabled, room_id: sourceRoom, url: sourceUrl.href};
+    } catch (_) { toast("弹幕源地址无效，请检查配置。", true); return; }
+  }
+  // 空字段不覆盖
+  if (!patch.avatar.avatar_id) delete patch.avatar.avatar_id;
+  if (!patch.rtc.artc.app_id) delete patch.rtc.artc.app_id;
+  if (!patch.rtc.trtc.sdk_app_id) delete patch.rtc.trtc.sdk_app_id;
+  try{
+    await api("/api/settings", {method:"POST", body:JSON.stringify(patch)});
+    $("s_vidu_key").value = "";
+    // 画面内字幕层是纯前端渲染 → 保存后立刻用新值重画, 不用刷新(其余设置下次连线生效)
+    capCfg.on = patch.stage.cap_overlay;
+    capCfg.offsetPx = patch.stage.cap_offset_px;
+    capCfg.lines = patch.stage.cap_lines;
+    capCfg.fontPx = patch.stage.cap_font_px;
+    capCfg.fadeSec = patch.stage.cap_fade_sec;
+    capCfg.showSys = patch.stage.cap_show_sys;
+    capCfg.maskIds = patch.stage.mask_ids;
+    capCfg.shadow = patch.stage.shadow;
+    applyCapCfg();
+    toast("设置已保存（画面字幕层即时生效，其余下次连线生效）");
+    $("drawer").classList.remove("open");
+  }catch(e){ toast("保存失败: " + (e.message||e), true); }
+});
+$("btnLlmReset").addEventListener("click", async ()=>{
+  try{ await api("/api/llm/reset", {method:"POST"}); toast("对话记忆已清空"); }
+  catch(e){ toast("失败: " + (e.message||e), true); }
+});
+$("btnCredits").addEventListener("click", async ()=>{
+  try{
+    const d = await api("/api/credits");
+    const v = d.data ?? d.credits ?? d;
+    $("creditsView").textContent = typeof v === "object" ? JSON.stringify(v).slice(0, 80) : String(v);
+  }catch(e){ $("creditsView").textContent = "查询失败"; }
+});
+$("s_img").addEventListener("change", ()=>{
+  const f = $("s_img").files[0];
+  if (!f) return;
+  if (f.size > 50*1024*1024) return toast("图片超过 50MB", true);
+  const rd = new FileReader();
+  rd.onload = async ()=>{
+    try{
+      await api("/api/settings", {method:"POST", body:JSON.stringify({avatar:{image_uri: rd.result, avatar_id: null}})});
+      $("s_avatar_id").value = "";                     // 临时图与平台资产互斥, 同步清掉表单
+      toast("形象图已保存，下次连线生效（平台资产选择已清除）");
+    }catch(e){ toast("保存失败: " + (e.message||e), true); }
+  };
+  rd.readAsDataURL(f);
+});
+
+/* ───────── 抽屉 / 键盘 ───────── */
+/* 抽屉/歌单面板挂进右侧字幕事件区: 只覆盖它, 视频区零位移(推流约束)
+   ⚠️ 2026-10-17: 新加面板必须同时加进这张表, 否则面板会按视口定位**盖住数字人**
+   (参考图面板第一版就漏了 → 用户报"弹出来挡住了数字人") */
+$("rightPanel").appendChild($("drawer"));
+$("rightPanel").appendChild($("songs"));
+$("rightPanel").appendChild($("cmds"));
+$("rightPanel").appendChild($("vpanel"));
+$("rightPanel").appendChild($("refs"));
+
+
+/* ───────── 视频区 / 右栏：可拖动调宽（2026-10-20 用户要求） ─────────
+   拖动中间的分隔条改右栏宽度（240px ~ 屏宽 75%）；双击复位 420px；
+   顶栏「⤢ 全屏视频」一键折叠右栏；宽度存 localStorage。
+   只改一个 CSS 变量 --rightW，视频区 flex:1 自动吃剩余宽度 → 两者铺满整屏。 */
+(function stageSplit(){
+  const main = $("main"), sp = $("splitter"), panel = $("rightPanel");
+  if (!main || !sp || !panel) return;
+  const DEF = 420, MIN = 240;
+  let folded = false, lastW = DEF, dragging = false;
+  const maxW = () => Math.min(window.innerWidth * 0.75, window.innerWidth - 320);
+  function apply(w){
+    const v = Math.max(MIN, Math.min(maxW(), Math.round(w || DEF)));
+    main.style.setProperty("--rightW", v + "px");
+    main.dataset.rightw = String(v);        // 调试可见: DOM 里能直接读到实际生效的宽度
+    return v;
+  }
+  function curW(){
+    return parseInt(getComputedStyle(main).getPropertyValue("--rightW"), 10) || DEF;
+  }
+  function save(w){ try{ localStorage.setItem("s2s.stage.rightW", String(w)); }catch(e){} }
+  function rerender(){ try{ capRender(); }catch(e){} }
+  (function load(){
+    try{
+      const q = new URLSearchParams(location.search).get("right");
+      if (q){ const w = parseInt(q, 10); if (w >= MIN){ apply(w); return; } }
+      const v = parseInt(localStorage.getItem("s2s.stage.rightW") || "", 10);
+      if (v >= MIN) { apply(v); return; }
+    }catch(e){}
+    apply(DEF);
+  })();
+  sp.addEventListener("pointerdown", e => {
+    dragging = true;
+    try{ sp.setPointerCapture(e.pointerId); }catch(_){}
+    main.classList.add("dragging"); e.preventDefault();
+  });
+  sp.addEventListener("pointermove", e => { if (dragging) apply(window.innerWidth - e.clientX - 16); });
+  sp.addEventListener("pointerup", e => {
+    if (!dragging) return;
+    dragging = false; main.classList.remove("dragging");
+    try{ sp.releasePointerCapture(e.pointerId); }catch(_){}
+    save(curW()); rerender();
+  });
+  sp.addEventListener("dblclick", () => { const w = apply(DEF); save(w); rerender(); toast("右栏宽度已复位 " + w + "px"); });
+  window.addEventListener("resize", () => apply(curW()));
+  const fb = $("btnSplitFold");
+  if (fb) fb.addEventListener("click", () => {
+    if (!folded){
+      folded = true; lastW = curW();
+      main.style.setProperty("--rightW", "0px");
+      sp.style.display = "none";
+      fb.textContent = "⤡ 展开右栏"; fb.classList.add("on");
+    } else {
+      folded = false; sp.style.display = "";
+      apply(lastW);
+      fb.textContent = "⤢ 全屏视频"; fb.classList.remove("on");
+    }
+    rerender();
+  });
+  setTimeout(rerender, 300);
+})();
+
+$("btnDrawer").addEventListener("click", ()=>{ $("drawer").classList.add("open"); loadSettings(); refreshVoices(); refreshLibs(); refreshFiles(); });
+
+/* ───────── 资产库（形象） ───────── */
+async function loadAvatars(){
+  const box = $("avList");
+  box.innerHTML = '<div style="color:#61728c;font-size:12px">拉取中…</div>';
+  box.style.display = "block";
+  try{
+    const d = await api("/api/avatars");
+    d.items.sort((a, b)=> String(b.created_at||"").localeCompare(String(a.created_at||"")));   // 新建的排最前, 上传立刻看得见
+    if (!d.items.length){
+      box.innerHTML = '<div style="color:#61728c;font-size:12px">账号里还没有形象资产, 用「⬆ 传图建形象」传一张单人图。</div>';
+      return;
+    }
+    box.innerHTML = "";
+    if (d.current_image_uri && !d.current_avatar_id){
+      const note = document.createElement("div");
+      note.style.cssText = "font-size:11px;color:#8aa0c0;margin-bottom:2px";
+      note.textContent = "当前用的是临时上传图（未入资产库）。点下面卡片的「启用」可切到平台形象。";
+      box.appendChild(note);
+    }
+    box.style.display = "grid";
+    box.style.gridTemplateColumns = "repeat(auto-fill, minmax(118px, 1fr))";
+    box.style.gap = "10px";
+    for (const it of d.items){
+      const cur = it.id && it.id === d.current_avatar_id;
+      const card = document.createElement("div");
+      card.style.cssText = "border:1px solid " + (cur ? "var(--acc)" : "var(--line)") +
+        "; border-radius:10px; overflow:hidden; display:flex; flex-direction:column; background:rgba(10,14,24,.45)";
+      const img = document.createElement("img");
+      img.src = it.image || ""; img.loading = "lazy"; img.alt = it.name;
+      img.style.cssText = "width:100%; height:88px; object-fit:cover; display:block; background:#0b0f1a";
+      const meta = document.createElement("div");
+      meta.style.cssText = "padding:6px 8px 1px; font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; " +
+        (cur ? "color:var(--acc); font-weight:600" : "color:#dbe4f2");
+      meta.textContent = (cur ? "● " : "") + it.name;
+      meta.title = it.name;
+      const st = document.createElement("div");
+      st.style.cssText = "padding:0 8px; font-size:10px; color:#61728c";
+      st.textContent = (it.status || "?") + (it.id ? " · …" + it.id.slice(-6) : "");
+      const btns = document.createElement("div");
+      btns.style.cssText = "display:flex; gap:5px; padding:6px 8px 8px";
+      const bUse = document.createElement("button"); bUse.className = "ghost"; bUse.style.flex = "1";
+      bUse.style.fontSize = "11px"; bUse.style.padding = "3px 0";
+      bUse.textContent = "启用";
+      bUse.onclick = async ()=>{
+        try{ await api("/api/avatars/use", {method:"POST", body:JSON.stringify({avatar_id: it.id})});
+             $("s_avatar_id").value = it.id;               // 同步抽屉表单, 防保存设置把选择覆盖回去
+             toast("已启用「" + it.name + "」，下次连线生效"); loadAvatars(); }
+        catch(e){ toast("启用失败: " + (e.message||e), true); }
+      };
+      const bDel = document.createElement("button"); bDel.className = "ghost";
+      bDel.style.fontSize = "11px"; bDel.style.padding = "3px 7px";
+      bDel.textContent = "🗑";
+      bDel.onclick = async ()=>{
+        if (!confirm(`从 Vidu 平台删除形象「${it.name}」? 不可恢复`)) return;
+        try{ await api("/api/avatars/delete", {method:"POST", body:JSON.stringify({avatar_id: it.id})});
+             toast("已删除"); loadAvatars(); }
+        catch(e){ toast("删除失败: " + (e.message||e), true); }
+      };
+      btns.appendChild(bUse); btns.appendChild(bDel);
+      card.appendChild(img); card.appendChild(meta); card.appendChild(st); card.appendChild(btns);
+      box.appendChild(card);
+    }
+  }catch(e){ box.innerHTML = '<div style="color:#f87171;font-size:12px">' + (e.message||e) + '</div>'; }
+}
+$("btnAvList").addEventListener("click", loadAvatars);
+$("btnAvUpload").addEventListener("click", ()=>$("avFile").click());
+$("avFile").addEventListener("change", async ()=>{
+  const f = $("avFile").files[0];
+  if (!f) return;
+  if (f.size > 20*1024*1024) return toast("图片超过 20MB", true);
+  toast("传图建形象中…（约几秒到几十秒）");
+  const fd = new FormData(); fd.append("file", f);
+  try{
+    const res = await fetch("/api/avatars/upload", {method:"POST", body:fd});
+    const d = await res.json();
+    if (!res.ok) throw new Error(d.detail || res.status);
+    toast(`形象「${d.name}」已建好，点「启用」使用`);
+    loadAvatars();
+  }catch(e){ toast("建形象失败: " + (e.message||e), true); }
+  $("avFile").value = "";
+});
+
+/* ───────── Vidu API Key 切换 ───────── */
+async function loadKeys(){
+  try{
+    const d = await api("/api/vidu/keys");
+    $("viduKeyNow").textContent = d.active ? `${d.active_masked}（…${d.active}）` : "未配置";
+    const sel = $("s_vidu_keys");
+    sel.innerHTML = "";
+    for (const k of d.keys){
+      const o = document.createElement("option");
+      o.value = k; o.textContent = "…" + k + (k === d.active ? "（当前）" : "");
+      sel.appendChild(o);
+    }
+    if (!d.keys.length) sel.innerHTML = '<option value="">（空）</option>';
+  }catch(e){ toast("key 列表拉取失败: " + (e.message||e), true); }
+}
+$("btnKeyList").addEventListener("click", loadKeys);
+$("btnKeyUse").addEventListener("click", async ()=>{
+  const name = $("s_vidu_keys").value;
+  if (!name) return toast("先选一个备用 key", true);
+  try{ await api("/api/vidu/keys", {method:"POST", body:JSON.stringify({action:"activate", name})});
+       toast("已切换 key，下次连线生效"); loadKeys(); }
+  catch(e){ toast("切换失败: " + (e.message||e), true); }
+});
+$("btnKeyDel").addEventListener("click", async ()=>{
+  const name = $("s_vidu_keys").value;
+  if (!name) return toast("先选一个备用 key", true);
+  if (!confirm("从备用列表删除 …" + name + " ?")) return;
+  try{ await api("/api/vidu/keys", {method:"POST", body:JSON.stringify({action:"delete", name})});
+       toast("已删除"); loadKeys(); }
+  catch(e){ toast("删除失败: " + (e.message||e), true); }
+});
+$("btnKeyAddUse").addEventListener("click", async ()=>{
+  const key = $("s_vidu_new").value.trim();
+  if (!key) return toast("先粘贴新 key", true);
+  try{ await api("/api/vidu/keys", {method:"POST", body:JSON.stringify({action:"add", key, activate:true})});
+       $("s_vidu_new").value = ""; toast("新 key 已启用，下次连线生效"); loadKeys(); }
+  catch(e){ toast("失败: " + (e.message||e), true); }
+});
+$("btnKeyAdd").addEventListener("click", async ()=>{
+  const key = $("s_vidu_new").value.trim();
+  if (!key) return toast("先粘贴新 key", true);
+  try{ await api("/api/vidu/keys", {method:"POST", body:JSON.stringify({action:"add", key, activate:false})});
+       $("s_vidu_new").value = ""; toast("已存入备用列表"); loadKeys(); }
+  catch(e){ toast("失败: " + (e.message||e), true); }
+});
+loadKeys();
+
+$("btnDrawerX").addEventListener("click", ()=>$("drawer").classList.remove("open"));
+document.addEventListener("keydown", e=>{
+  if (e.key === "Escape"){ $("drawer").classList.remove("open"); $("songs").classList.remove("open"); }
+});
+$("btnGo").addEventListener("click", start);
+
+/* ───────── 启动 ───────── */
+fxApply();                    // 动作特效开关: 按上次状态应用(必须晚于 fxRows 声明 —— 2026-10-17 踩过 TDZ 坑: 页面脚本中断、连线按钮失效)
+loadSettings();
+refreshVoices();
+refreshFiles();
+poll();
+state.pollTimer = setInterval(poll, 1200);
+if (new URLSearchParams(location.search).get("openOutput") === "1"){
+  setTimeout(openBroadcastWindow, 350);
+}
+}
+
+function initOutputMirror(){
+  // Share the existing browser MediaStream. This viewer never creates or joins
+  // a Vidu/RTC session, changes settings, or stops the controller's tracks.
+  const byId = id => document.getElementById(id);
+  const videos = new Map();
+  const rtc = document.createElement("div");
+  rtc.id = "outputMedia";
+  byId("videoWrap").appendChild(rtc);
+  let mirrorTimer;
+  function clearVideo(){
+    for (const video of videos.values()){
+      video.srcObject = null;
+      video.remove();
+    }
+    videos.clear();
+  }
+  function hideOutput(){
+    clearVideo();
+    for (const id of ["avatarStill", "capOverlay", "lyricBox"]){
+      byId(id).style.display = "none";
+    }
+  }
+  function sync(){
+    let controller;
+    try {
+      controller = window.opener;
+      if (!controller || controller.closed){ hideOutput(); return; }
+      // Reading document is also a same-origin check.
+      controller = controller.document;
+    } catch (_) { hideOutput(); return; }
+    const wrap = controller.getElementById("videoWrap");
+    if (!wrap){ hideOutput(); return; }
+    const activeVideos = new Set([...wrap.querySelectorAll("video")].filter(source => {
+      const style = window.opener.getComputedStyle(source);
+      return style.display !== "none" && style.visibility !== "hidden" &&
+        !!source.srcObject && source.srcObject.getVideoTracks().length > 0;
+    }));
+    for (const [source, target] of videos){
+      if (!activeVideos.has(source)){
+        target.srcObject = null;
+        target.remove();
+        videos.delete(source);
+      }
+    }
+    for (const source of activeVideos){
+      let target = videos.get(source);
+      if (!target){
+        target = document.createElement("video");
+        target.autoplay = true;
+        target.playsInline = true;
+        // Audio remains in the controller; a second player must not echo it.
+        target.muted = true;
+        rtc.appendChild(target);
+        videos.set(source, target);
+      }
+      if (target.srcObject !== source.srcObject){
+        target.srcObject = source.srcObject;
+        target.play().catch(() => {});
+      }
+    }
+    const still = controller.getElementById("avatarStill");
+    if (still){
+      if (byId("avatarStill").getAttribute("src") !== still.getAttribute("src")){
+        if (still.getAttribute("src")) byId("avatarStill").src = still.src;
+        else byId("avatarStill").removeAttribute("src");
+      }
+      byId("avatarStill").style.cssText = still.style.cssText;
+    }
+    for (const id of ["capOverlay", "lyricBox"]){
+      const source = controller.getElementById(id);
+      const target = byId(id);
+      if (!source) continue;
+      if (target.innerHTML !== source.innerHTML) target.innerHTML = source.innerHTML;
+      target.style.cssText = source.style.cssText;
+    }
+    const sourceStyle = window.opener.getComputedStyle(controller.documentElement);
+    for (const name of ["--cap-sh", "--lyr-sh", "--lyr-sh-on"]){
+      document.documentElement.style.setProperty(name, sourceStyle.getPropertyValue(name));
+    }
+  }
+  hideOutput();
+  sync();
+  mirrorTimer = setInterval(sync, 100);
+  byId("videoWrap").addEventListener("dblclick", () => {
+    const operation = document.fullscreenElement
+      ? document.exitFullscreen() : document.documentElement.requestFullscreen();
+    if (operation && operation.catch) operation.catch(() => {});
+  });
+  window.addEventListener("pagehide", () => {
+    clearInterval(mirrorTimer);
+    clearVideo();
+  }, {once: true});
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,67 @@
+# ── 凭据与个人配置: 绝不入库 ─────────────────────────────
+config.json
+config.json.*
+config.*.json
+!config.example.json
+config.json.bak
+config.*.bak
+.env
+.env.*
+*.env
+*.env.*
+*.key
+*.key.*
+*.pem
+*.pem.*
+*.p12
+*.pfx
+credentials.json
+secrets.json
+# 旧版 RTC 调试页面包含历史凭据, 仅保留在本机
+tools/rtc-probe.html
+
+# 备份与压缩包可能含实际配置或密钥
+*.bak
+*.backup
+*.zip
+*.7z
+*.tar
+*.tar.gz
+
+# ── 运行时状态(每场直播都变) ────────────────────────────
+logs/
+lyrics-cache/
+*.log
+tools/dm-stats.json
+
+# ── 点播歌库 / 音频(版权归原曲方, 不入库) ───────────────
+audio/*
+!audio/README.txt
+*.wav
+*.mp3
+*.flac
+*.m4a
+
+# ── 本地素材(形象/音色/参考图, 自行准备) ─────────────────
+assets/local/
+refs/*
+!refs/README.md
+
+# ── 环境 ───────────────────────────────────────────────
+.venv/
+.venv-align/
+.broadcast-browser/
+.broadcast-browser*/
+tools/ffmpeg/
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# ── 编辑器 / 系统 ──────────────────────────────────────
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
+.DS_Store
