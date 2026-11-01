@@ -1,358 +1,291 @@
-> 本机 Mac 接入版：当前默认使用 BreezeBlue 官方 API，Breeze02 已上传复用。启动与配置见 [LOCAL-DEPLOY.md](LOCAL-DEPLOY.md)；下文保留上游原版说明。
+# DeepSeek Live
 
-# 赛博小雅直播版 · 组件版数字人（Vidu s2）
+基于 [赛博小雅 cyber-xiaoya-live](https://github.com/cyber-xiaoya/cyber-xiaoya-live) 二次开发的数字人直播控制台。让数字人读懂弹幕、用自己的音色接话，再通过实时画面与观众互动。
 
-> **本项目永久免费开源。** 唯一官方来源：https://github.com/cyber-xiaoya/cyber-xiaoya-live
-> 任何付费售卖、代下载、代部署均未经授权，欢迎举报（举报：提 [Issue](https://github.com/cyber-xiaoya/cyber-xiaoya-live/issues) 或在本项目官方群里 @我）。
+当前部署采用 **本地编排 + DeepSeek 对话 + BreezeBlue 语音 + Vidu S2 数字人画面**。示例角色是蓝发鲸鱼娘「大肥鱼」：嘴硬、机灵，偶尔摆公主架子，也会认真回应观众。
 
-> 👤 **作者：天工开帧** · [抖音](https://v.douyin.com/BgCJXnllitM/) · [哔哩哔哩](https://space.bilibili.com/11946287) · [YouTube](https://www.youtube.com/@jintaoyi) · [博客](https://www.19980303.xyz/)
+> 本仓库是 Adeshen 的独立修改版本，与 DeepSeek 官方及上游官方发行无隶属关系。原项目作者为 **天工开帧 / AI少女宇宙计划组**；源码许可证与素材说明见 [LICENSE](LICENSE)、[NOTICE](NOTICE)。
 
-> 📦 **配套仓库**：[赛博小雅 · 弹幕采集器](https://github.com/cyber-xiaoya/cyber-xiaoya-danmaku) —— 抖音 / B站 / YouTube / 视频号，
-> 装好并把 `tts.output` 设成 `dh` 就能把观众弹幕灌进本仓库的桥。
+## 演示
 
-> ⚠️ **先说清楚：这不是"下载双击就能播"的成品。**
-> 仓库里给的是**整套软件**（舞台页 + 本地桥 + 弹幕/歌单/录播全链路），
-> 但**不包含**作者的人物形象、克隆音色、人设、动作库、歌库和任何 API Key —— 那些需要你自己准备。
-> 这份 README 会把"从零跑起来"需要做的每一步写清楚，照着做大约 **1 小时**。
-
----
-
-## 效果
+### 真实直播互动 · 约 16 秒
 
 <p align="center">
-  <img src="assets/live-on-douyin.jpg" width="620" alt="赛博小雅在抖音直播中的画面">
+  <a href="assets/live-demo-16s.mp4"><img src="assets/live-demo.gif" width="288" alt="大肥鱼回应直播观众的问号"></a>
 </p>
 
-这是**手机端抖音直播的实拍截图**：观众弹幕进来 → 舞台页把指令翻译成动作 → 数字人执行（画面里是"拿出墨镜戴上"），
-底部是她正在说的话（由 LLM 生成 + 本机 TTS 合成）。
+[观看带原声的直播精选](assets/live-demo-16s.mp4) · 544 × 960 · 保留直播现场画面与声音。GIF 为其中一段静音预览。
 
-<p align="center">
-  <img src="assets/demo.gif" width="320" alt="6 秒演示：弹幕驱动数字人动作">
-</p>
+三段接话依次是回应观众的「？」、接住观众对 AI 的夸奖，以及解释自己的「公主画风」。这是直播片段剪辑，不是端到端延迟测试。
 
-> 6 秒实拍。能看到：弹幕 → 动作指令 → 数字人真的执行了。
-> 🎬 [**带声音的原片**（720×1560，v1.0.0 附件）](https://github.com/cyber-xiaoya/cyber-xiaoya-live/releases/download/v1.0.0/demo-sound.mp4) · 无声版 [demo.mp4](assets/demo.mp4)
+### 角色自我介绍 · 15 秒
 
-<p align="center">
-  <img src="assets/stage-panel.png" width="820" alt="舞台页（主播操作台）">
-</p>
+[![大肥鱼数字人自我介绍](assets/demo-15s-poster.jpg)](assets/demo-15s.mp4)
 
-这是**主播这端看到的「舞台页」**：左边是数字人画面 + 实时字幕，右边是快捷指令 / 点播 / 参考图面板，
-底部一行是打字、直发动作、点播、中断、设置。（界面示例，字幕为演示数据）
+[观看带声音与中文字幕的自我介绍](assets/demo-15s.mp4) · 1280 × 720。画面与声音来自实际数字人会话，本段使用预先写好的介绍词。
 
----
+> 演示中的形象、音色与人设用于展示效果。仓库不提供这些账号资产的使用权限，也不包含 API Key；部署时请准备自己可使用的形象与音色。
 
-## 0. 你需要准备什么
+## 目前可以做什么
 
-| 项目 | 是否必须 | 说明 |
-|---|---|---|
-| Windows 10/11 + NVIDIA 显卡（≥8GB 显存） | 必须 | 渲染在云端，但 TTS 在本机跑 |
-| Vidu 账号 + API Key | 必须 | 数字人渲染与推流，按秒计费（1 积分/秒） |
-| LLM API Key（DeepSeek 或任意 OpenAI 兼容） | 必须 | 她的"脑子" |
-| TTS 服务（OmniVoice / 见 §2.4） | 必须，否则没声音 | 本机跑，WSL2 + CUDA |
-| ffmpeg | 必须 | 音频解码统一走它 |
-| 弹幕采集器（抖音/B站/YouTube） | 可选 | 不装就只能手动打字互动 |
-| 点播歌库 | 可选 | 不放歌就没有点播 |
-| 摄像头/推流软件（OBS 等） | 可选 | 想把画面推给平台才需要 |
+- **数字人实时接话**：手动聊天、直读文字，或订阅外部采集器的直播弹幕。
+- **自定义角色与音色**：在 `llm.system_prompt` 中设置人设，使用 BreezeBlue 已保存的 `voice_id`，支持切换本地音色预设。
+- **更像 VTuber 的互动调度**：按观众、房间、消息 ID 和时间识别弹幕；过滤重复与过期消息，每轮明确回应一个目标，减少串弹幕和重复接话。
+- **语音流式发送**：聊天与弹幕回复先生成简短完整回答，再增量接收 BreezeBlue PCM 音频并送入 Vidu。
+- **礼物与房间事件**：归一聊天、礼物、关注与房间状态事件，提供合并感谢与状态反馈。
+- **动作控制**：手动动作、动作库、弹幕指令匹配与确认队列；是否自动执行由配置控制。
+- **直播画面窗口**：独立输出数字人画面、字幕及歌词，便于 OBS 或直播伴侣采集；复用已有媒体流。
+- **辅助能力**：点歌、歌词、录播与诊断接口。点歌需要自备音频，录播取决于 RTC 与会话配置。
 
----
+## 架构与分工
 
-## 1. 它到底是怎么跑起来的
-
-```
-浏览器「舞台页」 ──文字──▶ 本地桥(FastAPI :8795) ──type9──▶ Vidu 云端
-     ▲                        │
-     │                   LLM 流式 → 分句 → TTS(本机) → PCM 流
-     │                        │
-     └── WebRTC 订阅画面 ◀── Vidu 渲染口型+动作 ──▶ RTC 频道
+```mermaid
+flowchart TB
+  subgraph Local[本机]
+    Source[独立 DyHub 采集器 :8757]
+    Bridge[FastAPI 本地桥 :8795<br/>人设 / 身份 / 去重 / 队列 / 历史 / 音频调度]
+    Stage[浏览器舞台页<br/>操作 / 状态 / 字幕]
+    Output[独立直播画面窗口<br/>复用媒体流]
+    Source -->|WebSocket 事件| Bridge
+    Stage <-->|操作与状态| Bridge
+    Stage -->|共享画面与字幕| Output
+  end
+  subgraph Cloud[云端服务]
+    LLM[DeepSeek<br/>生成角色回复]
+    TTS[BreezeBlue<br/>指定音色合成]
+    Vidu[Vidu S2<br/>数字人渲染与 RTC]
+  end
+  Bridge <-->|上下文 / 回复文本| LLM
+  Bridge <-->|回复文本 / PCM 音频流| TTS
+  Bridge <-->|会话 / 音频 / 动作 / 回执| Vidu
+  Vidu -->|RTC 音视频| Stage
 ```
 
-- **Vidu 只负责"变成画面"**：给文字/音频，它渲染口型、表情、动作并推流
-- **其余全在本机**：LLM 思考、TTS 发声、弹幕处理、点播、录播下载
-- 舞台页是本地网页（`http://127.0.0.1:8795/stage`），你在浏览器里操作，不需要公网
+1. **DyHub** 在独立进程中采集直播事件；本仓库通过 WebSocket 订阅。
+2. **本地桥** 选择本轮回应对象、检查消息新鲜度，携带角色设定与历史请求 DeepSeek。
+3. **DeepSeek** 返回简短完整回答；本地桥再调用 BreezeBlue，并把收到的 24 kHz 单声道 PCM16 音频按实时节奏发给 Vidu。
+4. **Vidu S2** 生成口型、表情和动作，浏览器通过 RTC 接收声音与画面。
 
-**为什么这么设计**：不用买云端 ASR/LLM/TTS 套餐，成本只剩 Vidu 的渲染费；音色、人设、歌单全在你自己手里。
+动作识别与语音回复分别调度。界面中的「已下发」表示指令已经发送，不能据此判断画面中的动作已经完成；同样，「语音发送结束」不等于远端已经播放结束。
 
----
+当前实现是 **TTS 音频流式传输**，尚未实现 LLM 文字逐 token 输入 TTS。音色预览、礼物感谢和部分旧路径仍使用整句合成。响应速度还受排队、API 与 Vidu 播放缓冲影响。
 
-## 2. 准备工作（照着做）
+## 部署前准备
 
-### 2.1 Vidu 账号、形象、动作库
+| 项目 | 用途 |
+| --- | --- |
+| macOS 或 Windows、Python 3.12 | 运行本地桥；推荐使用 `uv` 管理环境 |
+| `ffmpeg`，加入 PATH | 音频解码、试听及点歌等功能 |
+| 支持 RTC 的现代浏览器 | 打开舞台页，接收数字人音视频 |
+| Vidu API Key 与可用形象 | 创建数字人会话；本说明使用托管 RTC |
+| DeepSeek API Key | 生成对话回复 |
+| BreezeBlue API Key 与可访问的 `voice_id` | 合成角色语音 |
+| 独立弹幕采集器（可选） | 接收真实直播弹幕；不接入时可手动聊天 |
+| OBS / 直播伴侣（可选） | 将画面与声音推送至直播平台 |
 
-1. 注册 <https://platform.vidu.cn>，充值（按 1 积分/秒计费，余额 <45 积分开不了场）
-2. 在控制台创建一个**形象**（上传一张正脸照或一段视频），记下它的 **avatar_id**
-3. （可选）建一个**动作库**，往里加动作，记下 **library_id**；不建就填 `0` 用平台默认库
-4. 在「API Key」页面生成 key，形如 `vda_xxx`
+本文的云端方案不需要本机 NVIDIA 显卡、WSL 或下载 TTS 模型权重。对话、语音、数字人服务分别由对应平台计费；本地打开网页不会自动创建 Vidu 会话，点击「开始连线」后才创建。
 
-### 2.2 LLM API Key
+## 快速开始
 
-默认用 DeepSeek（`https://api.deepseek.com`，模型 `deepseek-flash`）。
-把 key 存成一个文本文件，路径填进 `config.json → llm.key_file`；也可以直接用环境变量 `DEEPSEEK_API_KEY`。
+### 1. 下载与安装
 
-### 2.3 本机环境
+```sh
+git clone https://github.com/Adeshen/cyber-deepseek-live.git
+cd cyber-deepseek-live
+```
 
-```powershell
-# 1) Python 3.12 + uv
-winget install --id Python.Python.3.12
-pip install uv
+仓库若为私有，克隆时需要相应账号权限。
 
-# 2) 装依赖
+**macOS**：已安装 `uv` 后，在项目目录执行：
+
+```sh
 uv venv .venv --python 3.12
-uv pip install -r requirements.txt --default-index https://pypi.tuna.tsinghua.edu.cn/simple
-
-# 3) ffmpeg（作者放在 C:\ffmpeg7.1.1\bin，你也可以直接放进 PATH）
-ffmpeg -version
+uv pip install --python .venv/bin/python -r requirements.mac.lock.txt
+cp config.example.json config.json
+mkdir -p assets/local/breezeblue-voices/my-voice
 ```
 
-### 2.4 TTS —— 这一步最容易卡住
+也可运行 `安装依赖-Mac.command` 安装 Python 依赖。若双击脚本提示权限不足，先执行 `chmod +x *.command`。`ffmpeg` 需要另行安装。
 
-项目**只认 OmniVoice**（`tts.engine = "omnivoice"`），因为要支持"克隆音色 + 直播中热切音色"。
+**Windows PowerShell**：
 
-#### 方案 A：OmniVoice + WSL2（推荐，作者本机就是这样跑的）
-
-要求：WSL2 + Ubuntu-22.04 + NVIDIA 驱动 + 至少 8GB 可用显存（作者实测稳定占用 ~11GB）。
-
-```bash
-# ── 以下全部在 WSL2 的 Ubuntu-22.04 里执行 ──
-sudo apt update && sudo apt install -y ffmpeg git
-git clone https://github.com/k2-fsa/OmniVoice ~/omnivoice-wsl
-cd ~/omnivoice-wsl
-
-# 建环境（以官方 README 为准，作者用 Python 3.12 + torch cu13x + flashinfer）
+```powershell
 uv venv .venv --python 3.12
-uv pip install -r requirements.txt
-
-# 下载模型 OmniVoice-bf16（HuggingFace 或 ModelScope 均可）
-# 作者把模型放在 Windows 的 E 盘，WSL 里通过 /mnt/e/... 访问，不占 WSL 磁盘
-
-# 启动服务（FlashInfer + CUDA Graph 加速）
-export CUDA_HOME=~/omnivoice-wsl/.venv/lib/python3.12/site-packages/nvidia/cuda_nvcc
-.venv/bin/python demo_flashinfer.py \
-  --model /mnt/e/llama-models/models/OmniVoice-bf16 \
-  --port 9877 --no-asr --ip 0.0.0.0 \
-  --graph-buckets 5,10,15,20,30
+uv pip install --python .venv\Scripts\python.exe -r requirements.windows.lock.txt
+Copy-Item config.example.json config.json
+New-Item -ItemType Directory -Force assets/local/breezeblue-voices/my-voice
 ```
 
-> ⚠️ `demo_flashinfer.py` 的参数、依赖版本可能随上游变化，**以 OmniVoice 官方 README 为准**；
-> 上面的命令是作者本机实测能跑的那一份，仅作参考。
+已有 `config.json` 的用户请直接编辑现有文件，避免覆盖原配置。
 
-启动后从 Windows 验证：
+### 2. 配置三个 API
+
+**注意：`config.example.json` 保留了上游的 OmniVoice 默认值。使用本文方案时，必须把 `tts.engine` 改为 `breezeblue`，并填写音色目录与预设名。**
+
+在两个文本文件中分别保存自己的 Key，只放 Key 本身，不加引号或变量名：
+
+| 凭据 | 当前读取位置 |
+| --- | --- |
+| Vidu | `config.json` 的 `vidu.api_key` |
+| DeepSeek | `assets/local/deepseek.key`，由 `llm.key_file` 指向 |
+| BreezeBlue | `assets/local/breezeblue.key`，由 `tts.breezeblue_key_file` 指向 |
+
+将下面字段**合并到** `config.json` 的对应段，保留其余配置：
+
+```json
+{
+  "vidu": {
+    "api_key": "YOUR_VIDU_API_KEY"
+  },
+  "avatar": {
+    "avatar_id": "YOUR_AVATAR_ID",
+    "name": "我的数字人"
+  },
+  "rtc": {
+    "mode": "managed"
+  },
+  "llm": {
+    "base_url": "https://api.deepseek.com",
+    "model": "deepseek-flash",
+    "thinking": "disabled",
+    "key_file": "assets/local/deepseek.key",
+    "system_prompt": "你是一位机灵、慵懒、有一点小骄傲的成年鲸鱼娘主播。自然回应当前观众，通常一到两句；认真问题先讲清楚。不复读弹幕，不编造自己看见的画面，也不把已下发的动作说成已完成。"
+  },
+  "tts": {
+    "engine": "breezeblue",
+    "breezeblue_base": "https://api.breeze.blue/v1",
+    "breezeblue_key_file": "assets/local/breezeblue.key",
+    "breezeblue_timeout_sec": 120,
+    "breezeblue_streaming": true,
+    "voices_dir": "assets/local/breezeblue-voices",
+    "voice": "my-voice"
+  },
+  "session": {
+    "max_duration_seconds": 600
+  }
+}
+```
+
+这里的 `deepseek-flash` 沿用仓库配置，需确认自己的账号可调用；如平台提供其他模型，可修改 `llm.model`。首次调试可采用上例 600 秒会话上限，再按需要调整。
+
+**环境变量说明**：DeepSeek 支持在未配置 Key 文件时读取 `DEEPSEEK_API_KEY`；当前程序不会自动加载 `.env`，也不会自动把其中的 Vidu、BreezeBlue 变量写入配置。仅放置一个三 Key 环境文件不能完成本项目配置。
+
+### 3. 添加 BreezeBlue 音色
+
+先在自己的 BreezeBlue 账户准备一个可调用的音色。新建 `assets/local/breezeblue-voices/my-voice/breezeblue.json`：
+
+```json
+{
+  "label": "我的主播音色",
+  "voice_id": "voc_YOUR_VOICE_ID",
+  "params": {
+    "model_id": "breeze-tts-2",
+    "language_code": "zh"
+  }
+}
+```
+
+`tts.voice` 填文件夹名 **`my-voice`**，不是 `voc_...`。预设文件只允许 `label`、`voice_id`、`params` 三个顶层字段；Key 放在独立 Key 文件中。增加音色时，在同一父目录下再建一个预设文件夹。
+
+`config.json`、`.env`、`*.key` 与 `assets/local/` 已被 Git 忽略。macOS 可进一步执行 `chmod 600 config.json assets/local/*.key`，并避免将含密钥的配置或备份用于分享。
+
+### 4. 启动与验证
+
+macOS：
+
+```sh
+.venv/bin/python -m src.main
+```
+
+也可双击 `启动-大肥鱼.command` 使用本机启动器。
+
+Windows：
 
 ```powershell
-curl.exe -s -o NUL -w "%{http_code}" http://127.0.0.1:9877/    # 期望 200
-```
-
-- **WSL2 镜像网络模式**下用 `127.0.0.1:9877`
-- 默认 NAT 模式下用 `wsl hostname -I` 拿到的 IP，填进 `config.json → tts.omnivoice_base`
-- WSL2 IP 每次重启可能变，改了要同步改配置（或者用一键脚本自动检测）
-
-**音色从哪来**：`tts.voices_dir` 指向一个目录，里面每个子文件夹是一种音色：
-
-| 文件夹内容 | 音色类型 | 例子 |
-|---|---|---|
-| `design.json` | 用属性"设计"音色（性别/年龄/音调/方言，不需要参考音频） | 御姐音 |
-| `ref_audio.wav` + `ref_text.txt` + `omnivoice.txt` | 克隆音色 | 用你自己的录音克隆 |
-| `ref_audio.wav` + `ref_text.txt` | 同上，少一个描述文件 | |
-
-参考音频要求：**3–10 秒、单句、16kHz 单声道、无背景音**，`ref_text` 必须和音频逐字一致。
-
-#### 方案 B：先不装 TTS（无声彩排）
-
-桥没有 TTS 也能起来：舞台页能开、能连线、画面会动、字幕会滚，只是**她不会说话**。
-适合先把 Vidu 链路和舞台页跑通，再回头折腾 TTS。
-
----
-
-### 2.5（可选）接弹幕 —— 以抖音为例（群友最常用）
-
-**最省事的做法**：直接用配套仓库 [赛博小雅 · 弹幕采集器](https://github.com/cyber-xiaoya/cyber-xiaoya-danmaku)，
-它把抖音/B站/YouTube/视频号 四家都封装好了，`tts.output` 设成 `dh`（默认就是）即可：
-
-```powershell
-git clone https://github.com/cyber-xiaoya/cyber-xiaoya-danmaku.git
-cd cyber-xiaoya-danmaku
-copy config.example.json config.json      # 填房间号
-.venv\Scripts\python.exe reader.py       # 抖音还需另装 douyinLive（见下文）
-```
-
-只想做抖音、不想再挂一个仓库？也可以按下面三步，用公开的上游项目 + 本仓库自带的转发器：
-
----
-
-抖音的弹幕**不能直接从网页读**（要签名），社区通行做法是先跑一个**本地采集服务**，
-再用本仓库自带的转发器把消息灌进桥。
-
-#### 抖音三步
-
-1. **拿采集服务**：开源项目 <https://github.com/jwwsjlm/douyinLive>（Go 写的，自带 ws + http）。
-   自行编译或下载 release，改它目录下的 `config.yaml`（端口默认 `1089`、填抖音 cookie），启动。
-2. **确认在跑**：
-
-   ```powershell
-   curl.exe "http://127.0.0.1:1089/api/v1/rooms/<房间号>/status"
-   ```
-
-3. **起转发器**（本仓库自带，`tools/douyin_relay.py`，零额外依赖）：
-
-   ```powershell
-   .venv\Scripts\python.exe tools\douyin_relay.py --room <房间号> --verbose
-   ```
-
-   它会连 `ws://127.0.0.1:1089/ws/<房间号>`，把**弹幕**和**礼物**翻译成
-   `POST http://127.0.0.1:8795/api/danmaku`。
-   通了之后，舞台页右侧「字幕 / 事件」里会出现 `【弹幕】` 条目。
-
-> 转发器只做"翻译 + 转发"，不依赖采集器的内部实现 —— 换成别的采集器，只要它发同样的
-> JSON（`method` / `user.nickname` / `content` / `gift`）也能用。
-> ⚠️ 第三方采集工具与平台的合规风险由使用者自负；本项目只提供 `/api/danmaku` 这一个接口。
-
-#### 其它平台 / 自己写采集器
-
-只要按这个格式发请求，桥就认：
-
-```http
-POST http://127.0.0.1:8795/api/danmaku
-Content-Type: application/json
-
-{"nick":"观众名","content":"弹幕内容","platform":"bilibili","text":"念出来的文本"}
-```
-
-送礼事件额外带 `kind:"gift"`、`gift_item`、`gift_num`、`gift_value`（折算钻）。
-
-### 2.6（可选）点播歌单
-
-把 mp3/flac/wav 丢进 `audio/` 目录，舞台页「🎵 点播歌单」就能看到。
-想要逐行歌词字幕，需要 `lyrics-cache/<歌名>.lrc.json`（用 `tools/lyrics_align.py` 生成，需要 ASR 环境）。
-歌**不要提交进仓库**（`.gitignore` 已排除，版权也不允许）。
-
----
-
-## 3. 配置 `config.json`
-
-```powershell
-copy config.example.json config.json
-```
-
-| 字段 | 填什么 |
-|---|---|
-| `vidu.api_key` | 你的 `vda_...` |
-| `avatar.avatar_id` | 你上传的形象 ID（有 `image_uri` 就用那个） |
-| `action.library_id` | 动作库 ID；不建就填 `"0"` |
-| `rtc.mode` | `managed`（平台托管，推荐）或 `customer`（自备 RTC，要填 `rtc.artc.*`） |
-| `llm.key_file` | 存 key 的文本文件路径 |
-| `llm.system_prompt` | **你自己的人设**（模板里是示例，务必改） |
-| `tts.omnivoice_base` | OmniVoice 地址，默认 `http://127.0.0.1:9877` |
-| `tts.voices_dir` | 音色目录 |
-| `tts.files_dir` | 点播目录，默认 `audio` |
-| `bridge.port` | 默认 8795 |
-
-`config.json` 里有密钥，**已被 `.gitignore` 排除**，不要提交。
-
----
-
-## 4. 启动
-
-```powershell
-# 只起桥 + 舞台页（最简单）
 .venv\Scripts\python.exe -m src.main
-
-# 或者一键脚本：桥 + TTS + 弹幕 + 打开舞台页（缺的组件自动跳过）
-双击 启动-组件版全链路.cmd
 ```
 
-打开 <http://127.0.0.1:8795/stage>，点「开始连线」，等 5–15 秒画面出来。
+也可使用 `start.cmd`，通过 `status.cmd` 查看状态、`stop.cmd` 停止本地服务。Mac 启动器 `tools/run_local.py` 不适用于 Windows。
 
-> ⚠️ 连线即开始计费（1 积分/秒）。测完记得点「断开」。
+打开 **<http://127.0.0.1:8795/stage>**，检查形象与音色，点击「开始连线」，再输入一句简短问候。结束时先点网页「断开」，再停止本地服务；关闭浏览器页面不能代替结束云端会话。
 
----
+## 接入直播弹幕
 
-## 5. 舞台页能干什么
+本仓库不包含 DyHub 采集服务。请先让独立采集器在本机 `8757` 运行，并确认目标房间正在有效采集，再修改 `config.json`：
 
-| 区域 | 功能 |
-|---|---|
-| 中间 | 数字人画面 + 字幕 + 动作指令特效（只显示弹幕抓出来的指令） |
-| 底部输入框 | 打字跟她聊（走 LLM → TTS → 说话） |
-| 🎬 直发 | 直接把动作指令发给 Vidu，不经过 LLM（她默默执行） |
-| 🕹 快捷指令 | 点一下即发送；编辑模式可拖拽排序、改名、新建 |
-| 🎵 点播歌单 | 放歌（带歌词字幕） |
-| 🖼 参考图 | 换装 / 拿起商品 / 换背景 |
-| ⏺ 自动录播 | 让 Vidu 服务端录下这一场，播完自动下载到本地 |
-| ⚙ 设置 | 音色、开场白、字幕位置、黑名单词表等 |
+```json
+{
+  "danmaku_source": {
+    "enabled": true,
+    "url": "ws://127.0.0.1:8757/ws?roomId=YOUR_ROOM_ID&types=chat,gift,follow,roomStatus",
+    "room_id": "YOUR_ROOM_ID",
+    "platform": "抖音",
+    "max_age_ms": 20000
+  }
+}
+```
 
-> 📌 **快捷指令组只带了示例**：🍉吃喝 14 条 / 💇外表 11 条 / 🎭拟人化 10 条 / 🎁拿出 8 条。
-> 拟人化那 10 条是随机留的样例，真正的动作库请你在舞台页「🕹 快捷指令 → ✏️ 编辑」里自己加
-> （支持拖拽排序、双击改名、跨组移动、⇩导出/⇧导入）。
+通过舞台设置保存，或手工编辑后调用配置重载，弹幕源会重新订阅，无须重建数字人会话。`__hello`、`__connecting` 等控制帧不进入对话；WebSocket 连上也不代表房间正在直播，应同时查看房间状态与实际收取计数。
 
----
+数字人未连线时只接收、计数，不积压消息或自动触发对话与语音。只做手动互动时，将 `danmaku_source.enabled` 设为 `false` 即可。
 
-## 6. 常见问题
+上游另有 [赛博小雅弹幕采集器](https://github.com/cyber-xiaoya/cyber-xiaoya-danmaku)；本说明使用的是当前部署中的 DyHub WebSocket 协议，其他采集器需按各自接口适配。
 
-**Q：连不上 Vidu / 401？**
-检查 `vidu.api_key` 是否正确、余额是否 <45 积分（会直接开不了场）。
+## 输出到 OBS / 直播伴侣
 
-**Q：她没有声音？**
-99% 是 TTS 没起来。先 `curl http://127.0.0.1:9877/` 看是不是 200；WSL2 重启后需要重新拉起服务。
+在舞台页点击「直播画面窗口」，使用窗口采集获取数字人画面。独立窗口复用当前会话的媒体流，不会额外开一个 Vidu 会话。
 
-**Q：WSL2 重启后连不上 9877？**
-IP 变了。`wsl hostname -I` 查新 IP，改 `tts.omnivoice_base`，或者用镜像网络模式走 `127.0.0.1`。
+**声音从主控制台播放，独立输出窗口的视频为静音。** 请保持主控制台开启，为 OBS / 直播伴侣选择能捕获主控制台声音的音频来源，并检查监听与回声。
 
-**Q：画面卡 / 说话延迟大？**
-先看 GPU 占用；TTS 和渲染抢显存时，把 OmniVoice 的 `--graph-buckets` 减少一些。
+## 诊断与常见问题
 
-**Q：录播下载不到文件？**
-Vidu 侧封盘可能要几分钟到几十分钟；页面「↻ 拉取录播」可以手动重试。
+| 现象 | 检查方向 |
+| --- | --- |
+| 有页面，没有数字人画面 | 是否已开始连线；形象是否就绪；Vidu 账户权限、余额与 RTC 网络 |
+| 画面有了，没有声音 | `tts.engine`、Key 文件、音色预设目录、`voice_id` 权限，以及浏览器静音状态 |
+| 音色列表为空 | `voices_dir` 是否指向父目录；每个子目录是否有合法 `breezeblue.json` |
+| 弹幕源显示已连接，但主播不回 | 房间是否正在采集、是否有实际事件、数字人是否连线、消息是否过期或重复 |
+| 回复慢或接错对象 | 查看本轮回应对象与排队、LLM、TTS 首包记录；不要把首段音频发送耗时当作观众听到的延迟 |
+| 动作显示「已下发」，画面没变化 | 检查动作库、指令与云端执行；发送回执不是视觉完成确认 |
+| 独立直播窗口没有声音 | 从主控制台采集音频，见上节 |
 
-**Q：能换别的 TTS 吗？**
-代码里 `tts.engine` 目前只实现 `omnivoice`；要接 Edge-TTS / GPT-SoVITS 需要自己写一个适配层（`src/tts/` 下加一个类即可）。
+- `GET /api/health`：本地桥、TTS 引擎与弹幕源概况。
+- `GET /api/live/status`：当前回合、最近回复与发送状态。
+- `GET /api/danmaku/source`：采集连接、房间与事件计数。
+- `POST /api/settings/reload`：手工编辑 `config.json` 后重载配置，必要时重新订阅弹幕源。
+- `POST /api/danmaku`：本地注入测试弹幕，JSON 至少包含 `text`；可附 `nick`、`event_id`、`user_id`、`room_id`、`event_ts`（毫秒时间戳）。
+- 日志：`logs/bridge.log`。请勿把含账号信息的完整日志直接上传。
 
----
+本地注入测试不等于真实直播采集验收。字幕、发送状态与观看端实际播放可能存在缓冲差异；当前版本不承诺固定响应延迟。
 
-## 7. 仓库里**没有**什么
+## 代码与开发
 
-为了避免"下载后发现跑不起来"，这里明确列出作者**故意没放**的东西：
+| 路径 | 内容 |
+| --- | --- |
+| `src/bridge.py` | FastAPI 接口、舞台与状态推送 |
+| `src/engine.py` | 会话、回复、语音、动作与播放调度 |
+| `src/danmaku_source.py`、`src/dm_router.py` | 采集器接入、事件归一与弹幕路由 |
+| `src/llm.py` | 对话模型调用 |
+| `src/tts/` | BreezeBlue、旧 Breeze 网关、OmniVoice 与音频处理 |
+| `src/vidu/` | Vidu 会话与信令 |
+| `stage/index.html` | 舞台前端 |
+| `tests/`、`tools/` | 回归测试、启动与诊断工具 |
 
-- ❌ 人物形象（图片/视频/形象模型）—— 需要你自己上传到 Vidu
-- ❌ 克隆音色（参考音频、音色模型）
-- ❌ 人设提示词正文、文案、歌单、动作库内容
-- ❌ 任何 API Key、Cookie、账号凭据
-- ❌ OmniVoice 模型权重（几 GB）、Python 依赖环境（2 GB+）、歌库音频
-- ❌ 弹幕采集器（另一个项目，见 §2.5）
+离线回归示例：
 
-**这不是藏私**：形象、音色、人设是每个主播自己的东西，也是防止有人拿本项目做二次售卖的边界。
-代码是完整的，缺的都是"你自己的内容"。
+```sh
+python -m unittest discover -s tests -q
+node tools/test_stage_rtc.cjs
+```
 
----
+在已激活项目虚拟环境的终端执行；第二条需要 Node.js。测试通过不替代各云端账号与真实直播的联调。
 
-## 8. 许可证
+`LOCAL-DEPLOY.md` 和 `打包使用说明.md` 保留原机器部署、迁移包及历史验收记录，可能包含历史设置。**从 GitHub 新部署时，请以本 README 与实际代码为准**；私有配置、音色参考和验收文件不随源码提供。
 
-- **代码**：[GNU AGPL-3.0](./LICENSE)
-- **素材与品牌**：见 [NOTICE](./NOTICE)，不在 AGPL 授权范围内
-- 第三方依赖见 `requirements.txt`
+## 来源与许可
 
-## 9. 关于倒卖
+本项目源自 [cyber-xiaoya/cyber-xiaoya-live](https://github.com/cyber-xiaoya/cyber-xiaoya-live)，原作者为 **天工开帧 / AI少女宇宙计划组**。感谢上游提供舞台、本地桥、Vidu 组件接入及直播功能基础。本修改版主要围绕 Mac 部署、BreezeBlue 官方语音、VTuber 式弹幕互动、状态反馈与独立直播画面完善，修改说明更新于 **2026-11-01**。
 
-本项目**代码免费、永久免费**，我们不会在任何平台出售它。
+源码沿用 **GNU AGPL v3.0**，见 [LICENSE](LICENSE)。保留上游 [NOTICE](NOTICE)；其中说明的人物素材、克隆音色、人设文案、歌单、动作库及名称标识等权利不因源码许可而自动授予。第三方服务与依赖遵循各自条款和许可证。
 
-> ⚠️ **本项目没有官方 QQ 群、微信群，也不卖课、不卖安装服务。**
-> 任何以「官方答疑群」「内部版」「授权版」「代部署」名义收费的，都不是我，请直接拉黑。
-
-如果你看到有人在卖，那不是官方行为，欢迎把链接发到 [Issue](https://github.com/cyber-xiaoya/cyber-xiaoya-live/issues)。
-也提醒买家：盗版没有更新、没有答疑、出了问题也没人负责。
-
----
-
-## 10. 关注作者
-
-赛博小雅是我（**天工开帧**）在业余时间做的开源项目。想看她直播、催更、或者聊聊实现细节，来这些地方找我：
-
-| 平台 | 链接 |
-|---|---|
-| 🎵 抖音 | <https://v.douyin.com/BgCJXnllitM/> |
-| 📺 哔哩哔哩 | <https://space.bilibili.com/11946287> |
-| ▶️ YouTube | <https://www.youtube.com/@jintaoyi> |
-| ✖️ X / Twitter | <https://x.com/yijt1339303> |
-| 📝 博客 · 教程 | <https://www.19980303.xyz/> |
-| 💻 GitHub | <https://github.com/beiyege-01> |
-
-> 项目相关的问题**优先提到本仓库的 [Issue](https://github.com/cyber-xiaoya/cyber-xiaoya-live/issues)** —— 公开可查，也方便后来人搜到答案；私信容易被淹没。
-> 想直接看效果：抖音直播间搜「天工开帧」，晚上常有直播。
+官方服务资料：[Vidu 数字人文档](https://platform.vidu.cn/vidu-stream/doc/s2-avatar/realtime/quick-start) · [BreezeBlue 文档](https://docs.breezeblue.ai/) · [DeepSeek API 文档](https://api-docs.deepseek.com/)。
